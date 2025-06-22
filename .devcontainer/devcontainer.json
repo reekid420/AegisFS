@@ -1,0 +1,29 @@
+{
+    "name": "AegisFS Development",
+    "build": {
+        "dockerfile": "../Dockerfile"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "rust-lang.rust-analyzer",
+                "tamasfe.even-better-toml",
+                "serayuzgur.crates",
+                "bungcip.better-toml",
+                "ms-vscode.cpptools",
+                "ms-azuretools.vscode-docker"
+            ],
+            "settings": {
+                "rust-analyzer.checkOnSave.command": "clippy",
+                "editor.formatOnSave": true,
+                "editor.defaultFormatter": "rust-lang.rust-analyzer"
+            }
+        }
+    },
+    "forwardPorts": [],
+    "mounts": [
+        "source=${localEnv:HOME}/.cargo/git,target=/home/developer/.cargo/git,type=bind,consistency=cached",
+        "source=${localEnv:HOME}/.cargo/registry,target=/home/developer/.cargo/registry,type=bind,consistency=cached"
+    ],
+    "remoteUser": "developer"
+}

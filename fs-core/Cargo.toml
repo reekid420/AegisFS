@@ -1,0 +1,70 @@
+[package]
+name = "aegisfs-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "Core functionality for AegisFS filesystem"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/your-username/aegisfs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = ["encryption", "compression", "fuse"]
+encryption = ["aes-gcm", "hkdf"]
+compression = ["lz4_flex", "zstd"]
+fuse = ["fuser", "ctrlc", "clap", "env_logger"]
+
+[dependencies]
+# Core dependencies
+log = "0.4"
+anyhow = { version = "1.0", features = ["backtrace"] }
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+byteorder = "1.4"
+getrandom = "0.2"
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+# Filesystem and I/O
+libc = "0.2"
+fuser = { version = "0.12", optional = true }  # Optional for FUSE filesystem implementation
+
+# Cryptography
+aes-gcm = { version = "0.10", optional = true }
+hkdf = { version = "0.12", optional = true }
+ring = "0.17"
+
+# Compression
+lz4_flex = { version = "0.11", optional = true }
+zstd = { version = "0.13", optional = true, features = ["pkg-config"] }
+
+# Concurrency
+parking_lot = "0.12"
+
+# Dependencies for mount binary
+ctrlc = { version = "3.4", features = ["termination"], optional = true }
+clap = { version = "4.0", features = ["derive"], optional = true }
+env_logger = { version = "0.10", optional = true }
+
+# Testing
+[dev-dependencies]
+tempfile = "3.3"
+log = "0.4"
+env_logger = "0.10"
+fuser = { version = "0.12" }
+
+[lib]
+name = "aegisfs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aegisfs-mount"
+path = "src/bin/mount.rs"
+required-features = ["fuse"]
+
+[[bin]]
+name = "aegisfs-format"
+path = "src/bin/format.rs"
+required-features = ["fuse"]
