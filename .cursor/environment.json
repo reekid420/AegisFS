@@ -26,10 +26,6 @@
     {
       "name": "FUSE Debug",
       "command": "export RUST_LOG=debug && export RUST_BACKTRACE=1 && cd fs-core && echo 'Debug mode enabled. Run filesystem commands here.'"
-    },
-    {
-      "name": "Environment Setup",
-      "command": "echo 'Optional CI/CD Environment Variables:' && echo 'CODECOV_TOKEN=your_codecov_token_here' && echo 'DOCKERHUB_USERNAME=your_docker_username' && echo 'DOCKERHUB_TOKEN=your_docker_token' && echo '' && echo 'Set these in your Cursor settings for enhanced CI/CD features'"
     }
   ]
 }
