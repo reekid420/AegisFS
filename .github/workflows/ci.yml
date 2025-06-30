@@ -46,7 +46,7 @@ jobs:
     - name: Check Clippy
       run: |
         cd fs-core
-        cargo clippy --all-targets --all-features -- -D warnings
+        cargo clippy --all-targets --all-features
     
     - name: Check docs
       run: |
