@@ -31,15 +31,22 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         key: quick-checks
+        workspaces: fs-core
     
     - name: Check formatting
-      run: cargo fmt --all -- --check
+      run: |
+        cd fs-core
+        cargo fmt --all -- --check
     
     - name: Check Clippy
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      run: |
+        cd fs-core
+        cargo clippy --all-targets --all-features -- -D warnings
     
     - name: Check docs
-      run: cargo doc --no-deps --all-features
+      run: |
+        cd fs-core
+        cargo doc --no-deps --all-features
 
   # Job 2: Security and dependency scanning
   security:
@@ -55,18 +62,23 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         key: security
+        workspaces: fs-core
     
     - name: Install cargo-audit
       run: cargo install cargo-audit
     
     - name: Security audit
-      run: cargo audit
+      run: |
+        cd fs-core
+        cargo audit
     
     - name: Install cargo-deny
       run: cargo install cargo-deny
     
     - name: Check licenses and dependencies
-      run: cargo deny check
+      run: |
+        cd fs-core
+        cargo deny check
 
   # Job 3: Unit tests with coverage
   test-unit:
@@ -85,12 +97,14 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         key: unit-tests
+        workspaces: fs-core
     
     - name: Install cargo-llvm-cov
       run: cargo install cargo-llvm-cov
     
     - name: Run unit tests with coverage
       run: |
+        cd fs-core
         cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info \
           -- --skip test_data_persistence
     
@@ -98,7 +112,7 @@ jobs:
       if: env.CODECOV_TOKEN != ''
       uses: codecov/codecov-action@v3
       with:
-        file: lcov.info
+        file: fs-core/lcov.info
         name: unit-tests
         token: ${{ env.CODECOV_TOKEN }}
 
@@ -117,6 +131,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         key: integration-tests
+        workspaces: fs-core
     
     - name: Install FUSE development headers
       run: |
@@ -133,6 +148,7 @@ jobs:
     - name: Run integration tests
       run: |
         # Run tests that require FUSE mounting
+        cd fs-core
         cargo test --test persistence_test --test write_operations -- --test-threads=1
     
     - name: Upload test artifacts
@@ -142,7 +158,7 @@ jobs:
         name: integration-test-artifacts
         path: |
           /tmp/aegisfs-*
-          target/debug/
+          fs-core/target/debug/
 
   # Job 5: Cross-platform builds
   build-cross-platform:
@@ -173,6 +189,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         key: build-${{ matrix.os }}
+        workspaces: fs-core
     
     - name: Install platform dependencies
       run: |
@@ -185,19 +202,23 @@ jobs:
       shell: bash
     
     - name: Build all binaries
-      run: cargo build --release --all-targets --target ${{ matrix.target }}
+      run: |
+        cd fs-core
+        cargo build --release --all-targets --target ${{ matrix.target }}
     
     - name: Run basic tests (non-FUSE)
-      run: cargo test --lib --target ${{ matrix.target }}
+      run: |
+        cd fs-core
+        cargo test --lib --target ${{ matrix.target }}
     
     - name: Upload build artifacts
       uses: actions/upload-artifact@v3
       with:
         name: aegisfs-${{ matrix.target }}
         path: |
-          target/${{ matrix.target }}/release/aegisfs-*
-          !target/${{ matrix.target }}/release/*.d
-          !target/${{ matrix.target }}/release/deps/
+          fs-core/target/${{ matrix.target }}/release/aegisfs-*
+          !fs-core/target/${{ matrix.target }}/release/*.d
+          !fs-core/target/${{ matrix.target }}/release/deps/
 
   # Job 6: Performance benchmarks
   benchmarks:
@@ -217,6 +238,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         key: benchmarks
+        workspaces: fs-core
     
     - name: Install FUSE and benchmark dependencies
       run: |
@@ -227,9 +249,10 @@ jobs:
     - name: Run benchmarks
       run: |
         # Create benchmark directory if it doesn't exist
-        mkdir -p benches
+        mkdir -p fs-core/benches
         # Run benchmarks and save results
-        cargo criterion --message-format=json > benchmark-results.json || true
+        cd fs-core
+        cargo criterion --message-format=json > ../benchmark-results.json || true
     
     - name: Upload benchmark results
       uses: actions/upload-artifact@v3
@@ -261,7 +284,7 @@ jobs:
       run: |
         docker run --rm --privileged \
           -v /dev/fuse:/dev/fuse \
-          aegisfs:test cargo test --lib
+          aegisfs:test bash -c "cd fs-core && cargo test --lib"
 
   # Job 8: Memory safety and leak detection
   memory-safety:
@@ -280,9 +303,11 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         key: miri
+        workspaces: fs-core
     
     - name: Run MIRI on unit tests
       run: |
+        cd fs-core
         cargo miri test --lib
       env:
         MIRIFLAGS: -Zmiri-disable-isolation
@@ -303,6 +328,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         key: release
+        workspaces: fs-core
     
     - name: Install dependencies
       run: |
@@ -311,17 +337,19 @@ jobs:
     
     - name: Build optimized release
       run: |
+        cd fs-core
         cargo build --release --all-features
     
     - name: Run full test suite
       run: |
+        cd fs-core
         cargo test --release --all-features -- --test-threads=1
     
     - name: Validate binary sizes
       run: |
-        ls -la target/release/aegisfs-*
+        ls -la fs-core/target/release/aegisfs-*
         # Ensure binaries aren't unexpectedly large (>50MB each)
-        find target/release -name "aegisfs-*" -type f -size +50M -exec echo "Binary {} is too large" \; -exec exit 1 \;
+        find fs-core/target/release -name "aegisfs-*" -type f -size +50M -exec echo "Binary {} is too large" \; -exec exit 1 \;
 
 # Summary job that depends on all others
   ci-success:

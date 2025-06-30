@@ -89,6 +89,7 @@ format_code() {
     log_info "Formatting code..."
     cd "$(git rev-parse --show-toplevel)"
     
+    cd fs-core
     cargo fmt --all
     log_success "Code formatting complete"
 }
@@ -98,6 +99,7 @@ lint_code() {
     log_info "Running linting..."
     cd "$(git rev-parse --show-toplevel)"
     
+    cd fs-core
     # Clippy with all features
     cargo clippy --all-targets --all-features -- -D warnings
     
@@ -124,6 +126,7 @@ security_audit() {
         cargo install cargo-deny
     fi
     
+    cd fs-core
     cargo audit
     cargo deny check
     
@@ -141,6 +144,7 @@ test_with_coverage() {
         cargo install cargo-llvm-cov
     fi
     
+    cd fs-core
     # Run unit tests with coverage
     cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
     
@@ -154,6 +158,7 @@ test_integration() {
     
     setup_fuse
     
+    cd fs-core
     # Run integration tests with single thread to avoid FUSE conflicts
     cargo test --test persistence_test --test write_operations -- --test-threads=1
     
@@ -183,6 +188,7 @@ build_release() {
     log_info "Building release binaries${target:+ for $target}..."
     cd "$(git rev-parse --show-toplevel)"
     
+    cd fs-core
     if [[ -n "$target" ]]; then
         cargo build --release --target "$target" --all-features
     else
@@ -197,6 +203,7 @@ clean_build() {
     log_info "Cleaning build artifacts..."
     cd "$(git rev-parse --show-toplevel)"
     
+    cd fs-core
     cargo clean
     
     # Clean Docker images and containers
@@ -241,7 +248,7 @@ docker_test() {
     
     docker run --rm --privileged \
         -v /dev/fuse:/dev/fuse \
-        "$image" cargo test --lib
+        "$image" bash -c "cd fs-core && cargo test --lib"
     
     log_success "Docker tests complete"
 }

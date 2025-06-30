@@ -1,15 +1,15 @@
 //! Snapshot module for AegisFS
-//! 
+//!
 //! This module provides point-in-time snapshot functionality using Copy-on-Write (CoW)
 //! for metadata and data blocks. Snapshots are space-efficient and instantaneous.
 
-use std::collections::{HashMap, HashSet, BTreeMap};
+use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use parking_lot::RwLock;
 use thiserror::Error;
-use serde::{Serialize, Deserialize};
 
 use crate::blockdev::{BlockDevice, BlockDeviceError};
 use crate::error::Result;
@@ -158,7 +158,7 @@ impl SnapshotManager {
     pub fn new(device: Arc<dyn BlockDevice>, config: SnapshotConfig) -> Self {
         let total_blocks = device.block_count();
         let reserved = (total_blocks * config.reserved_space_percent as u64) / 100;
-        
+
         Self {
             device,
             config,
@@ -194,14 +194,19 @@ impl SnapshotManager {
 
         // Check if name already exists
         if self.name_to_id.read().contains_key(name) {
-            return Err(crate::error::Error::Other(format!("Snapshot '{}' already exists", name)));
+            return Err(crate::error::Error::Other(format!(
+                "Snapshot '{}' already exists",
+                name
+            )));
         }
 
         // Generate new snapshot ID
         let snapshot_id = self.next_snapshot_id.fetch_add(1, Ordering::SeqCst);
 
         // Find parent snapshot (latest active snapshot)
-        let parent_id = self.snapshots.read()
+        let parent_id = self
+            .snapshots
+            .read()
             .values()
             .rev()
             .find(|s| s.state == SnapshotState::Active)
@@ -213,7 +218,10 @@ impl SnapshotManager {
             id: snapshot_id,
             name: name.to_string(),
             parent_id,
-            created_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            created_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
             state: SnapshotState::Creating,
             root_inode: 2, // TODO: Get actual root inode from filesystem
             block_count: 0,
@@ -223,7 +231,9 @@ impl SnapshotManager {
 
         // Add to snapshots
         self.snapshots.write().insert(snapshot_id, metadata.clone());
-        self.name_to_id.write().insert(name.to_string(), snapshot_id);
+        self.name_to_id
+            .write()
+            .insert(name.to_string(), snapshot_id);
 
         // Mark snapshot as active
         self.activate_snapshot(snapshot_id).await?;
@@ -242,25 +252,36 @@ impl SnapshotManager {
             snapshot.state = SnapshotState::Active;
             Ok(())
         } else {
-            Err(crate::error::Error::Other(format!("Snapshot {} not found", snapshot_id)))
+            Err(crate::error::Error::Other(format!(
+                "Snapshot {} not found",
+                snapshot_id
+            )))
         }
     }
 
     /// Delete a snapshot
     pub async fn delete_snapshot(&self, snapshot_id: u64) -> Result<()> {
         // Check if snapshot exists
-        let snapshot = self.snapshots.read()
+        let snapshot = self
+            .snapshots
+            .read()
             .get(&snapshot_id)
             .cloned()
-            .ok_or_else(|| crate::error::Error::Other(format!("Snapshot {} not found", snapshot_id)))?;
+            .ok_or_else(|| {
+                crate::error::Error::Other(format!("Snapshot {} not found", snapshot_id))
+            })?;
 
         // Check if snapshot has children
-        let has_children = self.snapshots.read()
+        let has_children = self
+            .snapshots
+            .read()
             .values()
             .any(|s| s.parent_id == snapshot_id && s.state != SnapshotState::Deleted);
 
         if has_children {
-            return Err(crate::error::Error::Other("Cannot delete snapshot with children".to_string()));
+            return Err(crate::error::Error::Other(
+                "Cannot delete snapshot with children".to_string(),
+            ));
         }
 
         // Mark snapshot for deletion
@@ -289,7 +310,8 @@ impl SnapshotManager {
 
     /// List all active snapshots
     pub fn list_snapshots(&self) -> Vec<SnapshotMetadata> {
-        self.snapshots.read()
+        self.snapshots
+            .read()
             .values()
             .filter(|s| s.state == SnapshotState::Active)
             .cloned()
@@ -313,12 +335,14 @@ impl SnapshotManager {
     /// Mark a block as referenced by a snapshot (for CoW)
     pub fn reference_block(&self, block_num: u64, snapshot_id: u64) -> Result<()> {
         let mut block_refs = self.block_refs.write();
-        
-        let entry = block_refs.entry(block_num).or_insert_with(|| BlockReference {
-            block_num,
-            ref_count: 0,
-            snapshots: HashSet::new(),
-        });
+
+        let entry = block_refs
+            .entry(block_num)
+            .or_insert_with(|| BlockReference {
+                block_num,
+                ref_count: 0,
+                snapshots: HashSet::new(),
+            });
 
         if !entry.snapshots.insert(snapshot_id) {
             return Err(crate::error::Error::Other(format!(
@@ -333,7 +357,8 @@ impl SnapshotManager {
 
     /// Check if a block needs CoW before modification
     pub fn needs_cow(&self, block_num: u64) -> bool {
-        self.block_refs.read()
+        self.block_refs
+            .read()
             .get(&block_num)
             .map(|ref_info| ref_info.ref_count > 1)
             .unwrap_or(false)
@@ -358,7 +383,10 @@ impl SnapshotManager {
             original_block: block_num,
             new_block,
             snapshot_id: 0, // TODO: Get current snapshot context
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
         };
 
         self.pending_cow.write().push(cow_op);
@@ -372,7 +400,9 @@ impl SnapshotManager {
         let free = self.free_blocks.fetch_sub(1, Ordering::SeqCst);
         if free == 0 {
             self.free_blocks.fetch_add(1, Ordering::SeqCst);
-            return Err(crate::error::Error::Other("No free blocks available".to_string()));
+            return Err(crate::error::Error::Other(
+                "No free blocks available".to_string(),
+            ));
         }
 
         // In a real implementation, this would use a proper block allocator
@@ -382,8 +412,9 @@ impl SnapshotManager {
     /// Rollback to a snapshot
     pub async fn rollback_to_snapshot(&self, snapshot_id: u64) -> Result<()> {
         // Verify snapshot exists and is active
-        let snapshot = self.get_snapshot(snapshot_id)
-            .ok_or_else(|| crate::error::Error::Other(format!("Snapshot {} not found", snapshot_id)))?;
+        let snapshot = self.get_snapshot(snapshot_id).ok_or_else(|| {
+            crate::error::Error::Other(format!("Snapshot {} not found", snapshot_id))
+        })?;
 
         if snapshot.state != SnapshotState::Active {
             return Err(crate::error::Error::Other(format!(
@@ -392,7 +423,11 @@ impl SnapshotManager {
             )));
         }
 
-        log::info!("Rolling back to snapshot '{}' (ID: {})", snapshot.name, snapshot_id);
+        log::info!(
+            "Rolling back to snapshot '{}' (ID: {})",
+            snapshot.name,
+            snapshot_id
+        );
 
         // In a real implementation, this would:
         // 1. Flush all pending writes
@@ -429,17 +464,17 @@ impl SnapshotManager {
     /// Load snapshots from disk
     async fn load_snapshots(&self) -> Result<()> {
         log::info!("Loading snapshots from disk");
-        
+
         // For now, use a simple JSON file approach
         // In production, this would be integrated with the block device metadata
         let snapshot_file = "/tmp/aegisfs_snapshots.json";
-        
+
         if let Ok(contents) = tokio::fs::read_to_string(snapshot_file).await {
             if let Ok(saved_snapshots) = serde_json::from_str::<Vec<SnapshotMetadata>>(&contents) {
                 let mut snapshots = self.snapshots.write();
                 let mut name_to_id = self.name_to_id.write();
                 let mut max_id = 0u64;
-                
+
                 for snapshot in saved_snapshots {
                     if snapshot.state == SnapshotState::Active {
                         max_id = max_id.max(snapshot.id);
@@ -447,46 +482,53 @@ impl SnapshotManager {
                         snapshots.insert(snapshot.id, snapshot);
                     }
                 }
-                
+
                 // Update next snapshot ID
                 self.next_snapshot_id.store(max_id + 1, Ordering::SeqCst);
-                
+
                 log::info!("Loaded {} snapshots from disk", snapshots.len());
             }
         } else {
             log::info!("No existing snapshots found");
         }
-        
+
         Ok(())
     }
 
     /// Save snapshot metadata to disk
     async fn save_snapshot_metadata(&self, metadata: &SnapshotMetadata) -> Result<()> {
         log::debug!("Saving snapshot metadata for ID {}", metadata.id);
-        
+
         // Collect all active snapshots
-        let snapshots: Vec<SnapshotMetadata> = self.snapshots.read()
+        let snapshots: Vec<SnapshotMetadata> = self
+            .snapshots
+            .read()
             .values()
             .filter(|s| s.state == SnapshotState::Active)
             .cloned()
             .collect();
-        
+
         // Serialize to JSON
-        let json_data = serde_json::to_string_pretty(&snapshots)
-            .map_err(|e| crate::error::Error::Other(format!("Failed to serialize snapshots: {}", e)))?;
-        
+        let json_data = serde_json::to_string_pretty(&snapshots).map_err(|e| {
+            crate::error::Error::Other(format!("Failed to serialize snapshots: {}", e))
+        })?;
+
         // Write to file
         let snapshot_file = "/tmp/aegisfs_snapshots.json";
-        tokio::fs::write(snapshot_file, json_data).await
+        tokio::fs::write(snapshot_file, json_data)
+            .await
             .map_err(|e| crate::error::Error::Io(e))?;
-        
+
         log::debug!("Successfully saved snapshot metadata to {}", snapshot_file);
         Ok(())
     }
 
     /// Start automatic snapshot timer
     async fn start_auto_snapshot(&self) -> Result<()> {
-        log::info!("Starting automatic snapshot timer (interval: {}s)", self.config.auto_interval);
+        log::info!(
+            "Starting automatic snapshot timer (interval: {}s)",
+            self.config.auto_interval
+        );
         // In a real implementation, this would start a background task
         Ok(())
     }
@@ -498,7 +540,10 @@ impl SnapshotManager {
 
         SnapshotStats {
             total_snapshots: snapshots.len(),
-            active_snapshots: snapshots.values().filter(|s| s.state == SnapshotState::Active).count(),
+            active_snapshots: snapshots
+                .values()
+                .filter(|s| s.state == SnapshotState::Active)
+                .count(),
             total_blocks_referenced: block_refs.len(),
             total_space_used: block_refs.len() as u64 * 4096, // Assuming 4KB blocks
             cow_operations_pending: self.pending_cow.read().len(),
@@ -542,8 +587,11 @@ mod tests {
         // Create a snapshot
         let mut tags = HashMap::new();
         tags.insert("type".to_string(), "manual".to_string());
-        
-        let snapshot_id = manager.create_snapshot("test-snapshot", tags).await.unwrap();
+
+        let snapshot_id = manager
+            .create_snapshot("test-snapshot", tags)
+            .await
+            .unwrap();
         assert!(snapshot_id > 0);
 
         // Verify snapshot was created
@@ -566,7 +614,8 @@ mod tests {
 
         // Create multiple snapshots
         for i in 1..=3 {
-            manager.create_snapshot(&format!("snapshot-{}", i), HashMap::new())
+            manager
+                .create_snapshot(&format!("snapshot-{}", i), HashMap::new())
                 .await
                 .unwrap();
         }
@@ -612,7 +661,8 @@ mod tests {
         manager.init().await.unwrap();
 
         // Create and delete a snapshot
-        let snapshot_id = manager.create_snapshot("temp-snapshot", HashMap::new())
+        let snapshot_id = manager
+            .create_snapshot("temp-snapshot", HashMap::new())
             .await
             .unwrap();
 
@@ -621,4 +671,4 @@ mod tests {
         // Verify snapshot is gone
         assert!(manager.get_snapshot(snapshot_id).is_none());
     }
-} 
+}

@@ -31,24 +31,24 @@ pub type Result<T> = std::result::Result<T, BlockDeviceError>;
 pub trait BlockDevice: Send + Sync + 'static {
     /// Read a block from the device
     async fn read_block(&self, block_num: u64, buf: &mut [u8]) -> Result<()>;
-    
+
     /// Write a block to the device
     async fn write_block(&self, block_num: u64, data: &[u8]) -> Result<()>;
-    
+
     /// Get the total number of blocks in the device
     fn block_count(&self) -> u64;
-    
+
     /// Get the block size in bytes
     fn block_size(&self) -> usize {
         BLOCK_SIZE
     }
-    
+
     /// Sync any pending writes to the device
     async fn sync(&self) -> Result<()>;
-    
+
     /// Close the device
     async fn close(&mut self) -> Result<()>;
-    
+
     /// Check if the device is read-only
     fn is_read_only(&self) -> bool {
         false

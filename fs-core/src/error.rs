@@ -48,12 +48,18 @@ impl From<crate::FileSystemError> for Error {
             crate::FileSystemError::NotSupported => Error::Unsupported,
             crate::FileSystemError::NotFound(msg) => Error::Other(format!("Not found: {}", msg)),
             crate::FileSystemError::Fs(msg) => Error::Other(format!("Filesystem error: {}", msg)),
-            crate::FileSystemError::NotImplemented(msg) => Error::Other(format!("Not implemented: {}", msg)),
-            crate::FileSystemError::InvalidArgument(msg) => Error::Other(format!("Invalid argument: {}", msg)),
+            crate::FileSystemError::NotImplemented(msg) => {
+                Error::Other(format!("Not implemented: {}", msg))
+            }
+            crate::FileSystemError::InvalidArgument(msg) => {
+                Error::Other(format!("Invalid argument: {}", msg))
+            }
             crate::FileSystemError::NotADirectory => Error::NotADirectory,
             crate::FileSystemError::AlreadyExists => Error::AlreadyExists,
             crate::FileSystemError::InvalidName => Error::InvalidPath,
-            crate::FileSystemError::PermissionDenied => Error::Other("Permission denied".to_string()),
+            crate::FileSystemError::PermissionDenied => {
+                Error::Other("Permission denied".to_string())
+            }
             crate::FileSystemError::Io(e) => Error::Io(e),
             crate::FileSystemError::Layout(e) => Error::Other(format!("Layout error: {:?}", e)),
         }
@@ -64,11 +70,19 @@ impl From<crate::BlockDeviceError> for Error {
     fn from(err: crate::BlockDeviceError) -> Self {
         match err {
             crate::BlockDeviceError::Io(e) => Error::Io(e),
-            crate::BlockDeviceError::InvalidBlockNumber(n) => Error::Other(format!("Invalid block number: {}", n)),
-            crate::BlockDeviceError::InvalidBlockSize(s) => Error::Other(format!("Invalid block size: {}", s)),
+            crate::BlockDeviceError::InvalidBlockNumber(n) => {
+                Error::Other(format!("Invalid block number: {}", n))
+            }
+            crate::BlockDeviceError::InvalidBlockSize(s) => {
+                Error::Other(format!("Invalid block size: {}", s))
+            }
             crate::BlockDeviceError::ReadOnly => Error::Other("Device is read-only".to_string()),
-            crate::BlockDeviceError::DeviceNotOpen => Error::Other("Device is not open".to_string()),
-            crate::BlockDeviceError::DeviceClosed => Error::Other("Device is already closed".to_string()),
+            crate::BlockDeviceError::DeviceNotOpen => {
+                Error::Other("Device is not open".to_string())
+            }
+            crate::BlockDeviceError::DeviceClosed => {
+                Error::Other("Device is already closed".to_string())
+            }
         }
     }
 }

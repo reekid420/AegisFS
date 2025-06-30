@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use aegisfs::blockdev::FileBackedBlockDevice;
-use aegisfs::modules::{SnapshotManager, SnapshotConfig};
+use aegisfs::modules::{SnapshotConfig, SnapshotManager};
 
 #[derive(Parser)]
 #[command(author, version, about = "AegisFS snapshot management tool", long_about = None)]
@@ -73,17 +73,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize snapshot manager
     let device = Arc::new(
-        FileBackedBlockDevice::open(&cli.device, false)  // Open in read-write mode
+        FileBackedBlockDevice::open(&cli.device, false) // Open in read-write mode
             .await
-            .map_err(|e| format!("Failed to open device: {}", e))?
+            .map_err(|e| format!("Failed to open device: {}", e))?,
     );
 
     let mut manager = SnapshotManager::new(device, SnapshotConfig::default());
-    manager.init().await
+    manager
+        .init()
+        .await
         .map_err(|e| format!("Failed to initialize snapshot manager: {}", e))?;
 
     match cli.command {
-        Commands::Create { name, description, tags } => {
+        Commands::Create {
+            name,
+            description,
+            tags,
+        } => {
             info!("Creating snapshot '{}'", name);
 
             // Parse tags
@@ -115,23 +121,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         Commands::List { long } => {
             let snapshots = manager.list_snapshots();
-            
+
             if snapshots.is_empty() {
                 println!("No snapshots found");
                 return Ok(());
             }
 
             if long {
-                println!("{:<10} {:<20} {:<20} {:<15} {:<10} {:<10}", 
-                    "ID", "NAME", "CREATED", "STATE", "BLOCKS", "SPACE");
+                println!(
+                    "{:<10} {:<20} {:<20} {:<15} {:<10} {:<10}",
+                    "ID", "NAME", "CREATED", "STATE", "BLOCKS", "SPACE"
+                );
                 println!("{}", "-".repeat(85));
 
                 for snap in snapshots {
-                    let created = chrono::DateTime::<chrono::Utc>::from_timestamp(snap.created_at as i64, 0)
-                        .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
-                        .unwrap_or_else(|| "Unknown".to_string());
+                    let created =
+                        chrono::DateTime::<chrono::Utc>::from_timestamp(snap.created_at as i64, 0)
+                            .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                            .unwrap_or_else(|| "Unknown".to_string());
 
-                    println!("{:<10} {:<20} {:<20} {:<15} {:<10} {:<10}",
+                    println!(
+                        "{:<10} {:<20} {:<20} {:<15} {:<10} {:<10}",
                         snap.id,
                         snap.name,
                         created,
@@ -190,11 +200,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             if !force {
                 println!("WARNING: Rolling back to a snapshot will discard all changes made after the snapshot was created.");
-                println!("Are you sure you want to rollback to snapshot {}? (yes/no)", snapshot);
-                
+                println!(
+                    "Are you sure you want to rollback to snapshot {}? (yes/no)",
+                    snapshot
+                );
+
                 let mut input = String::new();
                 std::io::stdin().read_line(&mut input)?;
-                
+
                 if !input.trim().eq_ignore_ascii_case("yes") {
                     println!("Rollback cancelled");
                     return Ok(());
@@ -215,12 +228,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         Commands::Stats => {
             let stats = manager.get_snapshot_stats();
-            
+
             println!("Snapshot Statistics:");
             println!("  Total snapshots:     {}", stats.total_snapshots);
             println!("  Active snapshots:    {}", stats.active_snapshots);
             println!("  Blocks referenced:   {}", stats.total_blocks_referenced);
-            println!("  Total space used:    {}", format_bytes(stats.total_space_used));
+            println!(
+                "  Total space used:    {}",
+                format_bytes(stats.total_space_used)
+            );
             println!("  Pending CoW ops:     {}", stats.cow_operations_pending);
         }
     }
@@ -239,4 +255,4 @@ fn format_bytes(bytes: u64) -> String {
     }
 
     format!("{:.2} {}", size, UNITS[unit_index])
-} 
+}

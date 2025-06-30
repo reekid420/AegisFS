@@ -1,15 +1,15 @@
 //! Journaling module for AegisFS
-//! 
+//!
 //! This module implements write-ahead logging (WAL) for crash consistency.
 //! All filesystem modifications are logged before being applied to ensure
 //! atomic operations and crash recovery.
 
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use parking_lot::{Mutex, RwLock};
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use thiserror::Error;
 use tokio::sync::mpsc;
 
@@ -62,7 +62,8 @@ impl JournalEntryHeader {
     /// Serialize the header to bytes
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(Self::SIZE);
-        buf.write_u32::<LittleEndian>(self.entry_type as u32).unwrap();
+        buf.write_u32::<LittleEndian>(self.entry_type as u32)
+            .unwrap();
         buf.write_u64::<LittleEndian>(self.transaction_id).unwrap();
         buf.write_u64::<LittleEndian>(self.timestamp).unwrap();
         buf.write_u32::<LittleEndian>(self.data_length).unwrap();
@@ -114,11 +115,7 @@ pub struct JournalEntry {
 
 impl JournalEntry {
     /// Create a new journal entry
-    pub fn new(
-        entry_type: JournalEntryType,
-        transaction_id: u64,
-        data: Vec<u8>,
-    ) -> Self {
+    pub fn new(entry_type: JournalEntryType, transaction_id: u64, data: Vec<u8>) -> Self {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -322,7 +319,9 @@ impl JournalManager {
         // Check if we've reached the maximum number of transactions
         let mut active = self.active_transactions.write();
         if active.len() >= self.config.max_transactions {
-            return Err(crate::error::Error::Other("Too many active transactions".to_string()));
+            return Err(crate::error::Error::Other(
+                "Too many active transactions".to_string(),
+            ));
         }
 
         active.insert(transaction_id, transaction);
@@ -339,13 +338,16 @@ impl JournalManager {
         data: Vec<u8>,
     ) -> Result<()> {
         let active = self.active_transactions.read();
-        let transaction = active
-            .get(&transaction_id)
-            .ok_or_else(|| crate::error::Error::Other(format!("Transaction {} not found", transaction_id)))?;
+        let transaction = active.get(&transaction_id).ok_or_else(|| {
+            crate::error::Error::Other(format!("Transaction {} not found", transaction_id))
+        })?;
 
         let mut tx = transaction.lock();
         if tx.state != TransactionState::Active {
-            return Err(crate::error::Error::Other(format!("Transaction {} is not active", transaction_id)));
+            return Err(crate::error::Error::Other(format!(
+                "Transaction {} is not active",
+                transaction_id
+            )));
         }
 
         tx.add_entry(entry_type, data);
@@ -359,7 +361,9 @@ impl JournalManager {
             let active = self.active_transactions.read();
             active
                 .get(&transaction_id)
-                .ok_or_else(|| crate::error::Error::Other(format!("Transaction {} not found", transaction_id)))?
+                .ok_or_else(|| {
+                    crate::error::Error::Other(format!("Transaction {} not found", transaction_id))
+                })?
                 .clone()
         };
 
@@ -367,17 +371,17 @@ impl JournalManager {
         {
             let mut tx = transaction.lock();
             if tx.state != TransactionState::Active {
-                return Err(crate::error::Error::Other(format!("Transaction {} is not active", transaction_id)));
+                return Err(crate::error::Error::Other(format!(
+                    "Transaction {} is not active",
+                    transaction_id
+                )));
             }
             tx.state = TransactionState::Committing;
         }
 
         // Write transaction start marker
-        let start_entry = JournalEntry::new(
-            JournalEntryType::TransactionStart,
-            transaction_id,
-            vec![],
-        );
+        let start_entry =
+            JournalEntry::new(JournalEntryType::TransactionStart, transaction_id, vec![]);
         self.write_entry(&start_entry).await?;
 
         // Write all entries
@@ -389,11 +393,7 @@ impl JournalManager {
         }
 
         // Write transaction end marker
-        let end_entry = JournalEntry::new(
-            JournalEntryType::TransactionEnd,
-            transaction_id,
-            vec![],
-        );
+        let end_entry = JournalEntry::new(JournalEntryType::TransactionEnd, transaction_id, vec![]);
         self.write_entry(&end_entry).await?;
 
         // Flush to disk
@@ -428,8 +428,10 @@ impl JournalManager {
         let entry_bytes = entry.to_bytes();
         let blocks_needed = (entry_bytes.len() + 4095) / 4096; // Round up to block size
 
-        let write_pos = self.write_position.fetch_add(blocks_needed as u64, Ordering::SeqCst);
-        
+        let write_pos = self
+            .write_position
+            .fetch_add(blocks_needed as u64, Ordering::SeqCst);
+
         // Check if journal is full
         if write_pos + blocks_needed as u64 > self.config.journal_size {
             return Err(crate::error::Error::Other("Journal is full".to_string()));
@@ -443,7 +445,7 @@ impl JournalManager {
             let block_num = write_pos + i as u64;
             let block_start = i * 4096;
             let block_end = std::cmp::min(block_start + 4096, block_data.len());
-            
+
             self.device
                 .write_block(block_num, &block_data[block_start..block_end])
                 .await?;
@@ -468,7 +470,10 @@ impl JournalManager {
             let header = match JournalEntryHeader::from_bytes(&header_data) {
                 Ok(h) => h,
                 Err(_) => {
-                    log::warn!("Corrupt journal entry at block {}, stopping recovery", read_pos);
+                    log::warn!(
+                        "Corrupt journal entry at block {}, stopping recovery",
+                        read_pos
+                    );
                     break;
                 }
             };
@@ -479,7 +484,9 @@ impl JournalManager {
                 let data_blocks = (header.data_length as usize + 4095) / 4096;
                 for i in 1..=data_blocks {
                     let mut block_data = vec![0u8; 4096];
-                    self.device.read_block(read_pos + i as u64, &mut block_data).await?;
+                    self.device
+                        .read_block(read_pos + i as u64, &mut block_data)
+                        .await?;
                     entry_data.extend_from_slice(&block_data);
                 }
                 entry_data.truncate(header.data_length as usize);
@@ -516,7 +523,10 @@ impl JournalManager {
         }
 
         self.read_position.store(read_pos, Ordering::SeqCst);
-        log::info!("Journal recovery complete. Recovered {} transactions", recovered_transactions);
+        log::info!(
+            "Journal recovery complete. Recovered {} transactions",
+            recovered_transactions
+        );
 
         Ok(())
     }
@@ -545,7 +555,10 @@ impl JournalManager {
         };
 
         for transaction_id in active_ids {
-            log::warn!("Aborting uncommitted transaction {} during shutdown", transaction_id);
+            log::warn!(
+                "Aborting uncommitted transaction {} during shutdown",
+                transaction_id
+            );
             self.abort_transaction(transaction_id)?;
         }
 
@@ -570,11 +583,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_journal_entry_serialization() {
-        let entry = JournalEntry::new(
-            JournalEntryType::MetadataUpdate,
-            123,
-            b"test data".to_vec(),
-        );
+        let entry = JournalEntry::new(JournalEntryType::MetadataUpdate, 123, b"test data".to_vec());
 
         let bytes = entry.to_bytes();
         assert!(bytes.len() >= JournalEntryHeader::SIZE + 9);
@@ -599,7 +608,11 @@ mod tests {
 
         // Add entries
         journal
-            .add_entry(tx_id, JournalEntryType::MetadataUpdate, b"metadata".to_vec())
+            .add_entry(
+                tx_id,
+                JournalEntryType::MetadataUpdate,
+                b"metadata".to_vec(),
+            )
             .unwrap();
         journal
             .add_entry(tx_id, JournalEntryType::DataWrite, b"data".to_vec())
@@ -611,4 +624,4 @@ mod tests {
         // Shutdown
         journal.shutdown().await.unwrap();
     }
-} 
+}

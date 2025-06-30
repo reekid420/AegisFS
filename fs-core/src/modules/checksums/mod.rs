@@ -1,14 +1,14 @@
 //! Block checksums and self-healing module for AegisFS
-//! 
+//!
 //! This module provides block-level integrity checking using CRC32 checksums,
 //! background scrubbing for proactive error detection, and self-healing
 //! capabilities to automatically repair corrupted blocks.
 
+use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use parking_lot::RwLock;
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio::time::{interval, sleep};
@@ -210,7 +210,7 @@ impl ChecksumManager {
         if self.config.background_scrub {
             let sender = sender.clone();
             let interval_duration = self.config.scrub_interval;
-            
+
             tokio::spawn(async move {
                 let mut interval = interval(interval_duration);
                 loop {
@@ -243,11 +243,7 @@ impl ChecksumManager {
     }
 
     /// Write a block with checksum
-    pub async fn write_block_with_checksum(
-        &self,
-        block_num: u64,
-        data: &[u8],
-    ) -> Result<()> {
+    pub async fn write_block_with_checksum(&self, block_num: u64, data: &[u8]) -> Result<()> {
         // Calculate checksum
         let checksum = self.calculate_checksum(data);
 
@@ -272,11 +268,7 @@ impl ChecksumManager {
     }
 
     /// Read and verify a block
-    pub async fn read_block_with_verification(
-        &self,
-        block_num: u64,
-        buf: &mut [u8],
-    ) -> Result<()> {
+    pub async fn read_block_with_verification(&self, block_num: u64, buf: &mut [u8]) -> Result<()> {
         // Read the block
         self.device.read_block(block_num, buf).await?;
 
@@ -311,8 +303,16 @@ impl ChecksumManager {
             }
 
             // Update last verified timestamp
-            self.metadata.write().get_mut(&block_num).unwrap().last_verified = 
-                Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
+            self.metadata
+                .write()
+                .get_mut(&block_num)
+                .unwrap()
+                .last_verified = Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            );
         }
 
         Ok(())
@@ -337,7 +337,9 @@ impl ChecksumManager {
     /// Perform a full scrub of all blocks
     pub async fn scrub_all(&self) -> Result<ScrubStats> {
         if self.scrub_running.swap(true, Ordering::Acquire) {
-            return Err(crate::error::Error::Other("Scrub already in progress".to_string()));
+            return Err(crate::error::Error::Other(
+                "Scrub already in progress".to_string(),
+            ));
         }
 
         self.scrub_cancel.store(false, Ordering::Relaxed);
@@ -367,7 +369,7 @@ impl ChecksumManager {
                 }
                 Err(_) => {
                     stats.blocks_corrupted += 1;
-                    
+
                     // Attempt repair
                     if self.config.auto_repair {
                         match self.repair_block(block_num, &mut buf).await {
@@ -418,7 +420,7 @@ impl ChecksumManager {
     /// Mark a block as bad
     pub fn mark_bad_block(&self, block_num: u64) -> Result<()> {
         let mut bad_blocks = self.bad_blocks.write();
-        
+
         if bad_blocks.len() >= MAX_BAD_BLOCKS {
             return Err(crate::error::Error::Other(format!(
                 "Too many bad blocks ({}), exceeds limit",
@@ -428,7 +430,7 @@ impl ChecksumManager {
 
         bad_blocks.insert(block_num);
         log::warn!("Block {} marked as bad", block_num);
-        
+
         Ok(())
     }
 
@@ -508,7 +510,10 @@ mod tests {
 
         // Read and verify
         let mut buf = vec![0u8; 4096];
-        manager.read_block_with_verification(0, &mut buf).await.unwrap();
+        manager
+            .read_block_with_verification(0, &mut buf)
+            .await
+            .unwrap();
 
         assert_eq!(buf, data);
 
@@ -545,4 +550,4 @@ mod tests {
         assert_eq!(bad_blocks.len(), 2);
         assert!(!bad_blocks.contains(&20));
     }
-} 
+}

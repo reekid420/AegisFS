@@ -36,13 +36,13 @@ FROM base as ci
 COPY --chown=developer:developer . .
 
 # Pre-build dependencies for faster CI runs
-RUN cargo fetch
+RUN cd fs-core && cargo fetch
 
 # Enable FUSE in container
 RUN sudo modprobe fuse || true
 
 # Default command for CI
-CMD ["cargo", "test", "--all-features"]
+CMD ["bash", "-c", "cd fs-core && cargo test --all-features"]
 
 # Stage 3: Development environment with additional tools
 FROM base as dev
@@ -61,7 +61,7 @@ RUN apt-get update && apt-get install -y \
 COPY --chown=developer:developer . .
 
 # Build the project
-RUN cargo build --all-features
+RUN cd fs-core && cargo build --all-features
 
 # Expose any ports needed for development
 EXPOSE 8080
@@ -81,7 +81,7 @@ RUN useradd -m -s /bin/bash aegisfs && \
     usermod -a -G fuse aegisfs
 
 # Copy built binaries from development stage
-COPY --from=dev --chown=aegisfs:aegisfs /workspace/target/release/aegisfs-* /usr/local/bin/
+COPY --from=dev --chown=aegisfs:aegisfs /workspace/fs-core/target/release/aegisfs-* /usr/local/bin/
 
 USER aegisfs
 WORKDIR /home/aegisfs

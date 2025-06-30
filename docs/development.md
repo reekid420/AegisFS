@@ -66,17 +66,17 @@ cargo install cargo-audit cargo-deny cargo-llvm-cov cargo-criterion cargo-watch
 
 ```bash
 # Format code
-cargo fmt --all
+cd fs-core && cargo fmt --all
 # or
 ./scripts/ci-helpers.sh format
 
 # Run linting
-cargo clippy --all-targets --all-features -- -D warnings
+cd fs-core && cargo clippy --all-targets --all-features -- -D warnings
 # or
 ./scripts/ci-helpers.sh lint
 
 # Security audit
-cargo audit && cargo deny check
+cd fs-core && cargo audit && cargo deny check
 # or
 ./scripts/ci-helpers.sh audit
 ```
@@ -85,20 +85,20 @@ cargo audit && cargo deny check
 
 ```bash
 # Unit tests
-cargo test --lib
+cd fs-core && cargo test --lib
 
 # Integration tests (requires FUSE)
-cargo test --test persistence_test --test write_operations -- --test-threads=1
+cd fs-core && cargo test --test persistence_test --test write_operations -- --test-threads=1
 # or
 ./scripts/ci-helpers.sh test-integration
 
 # Tests with coverage
-cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
+cd fs-core && cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
 # or
 ./scripts/ci-helpers.sh test-coverage
 
 # All tests
-cargo test --all-features
+cd fs-core && cargo test --all-features
 ```
 
 ### Performance Testing
@@ -110,22 +110,22 @@ cd fs-core && cargo criterion
 ./scripts/ci-helpers.sh benchmarks
 
 # Memory profiling (Linux only)
-valgrind --tool=memcheck --leak-check=full ./target/release/aegisfs-format --help
+cd fs-core && valgrind --tool=memcheck --leak-check=full ./target/release/aegisfs-format --help
 ```
 
 ### Building
 
 ```bash
 # Debug build
-cargo build --all-features
+cd fs-core && cargo build --all-features
 
 # Release build
-cargo build --release --all-features
+cd fs-core && cargo build --release --all-features
 # or
 ./scripts/ci-helpers.sh build
 
 # Cross-compilation
-cargo build --release --target x86_64-unknown-linux-musl
+cd fs-core && cargo build --release --target x86_64-unknown-linux-musl
 # or
 ./scripts/ci-helpers.sh build x86_64-unknown-linux-musl
 ```
@@ -154,7 +154,7 @@ docker build --target runtime -t aegisfs:runtime .
 docker run -it --privileged -v /dev/fuse:/dev/fuse -v $(pwd):/workspace aegisfs:dev
 
 # Run tests in container
-docker run --rm --privileged -v /dev/fuse:/dev/fuse aegisfs:ci cargo test --lib
+docker run --rm --privileged -v /dev/fuse:/dev/fuse aegisfs:ci
 # or
 ./scripts/ci-helpers.sh docker-test aegisfs:ci
 ```
@@ -212,7 +212,7 @@ The project includes several automated workflows:
 
 ### CI Configuration Files
 
-- `deny.toml` - Dependency security and license checking
+- `fs-core/deny.toml` - Dependency security and license checking
 - `Dockerfile` - Multi-stage Docker builds
 - `.github/pull_request_template.md` - PR template for consistency
 
@@ -224,7 +224,7 @@ When testing filesystem operations:
 
 1. **Always use single-threaded tests** for FUSE operations:
    ```bash
-   cargo test --test integration_test -- --test-threads=1
+   cd fs-core && cargo test --test integration_test -- --test-threads=1
    ```
 
 2. **Verify data persistence**:
@@ -263,17 +263,17 @@ export RUST_LOG=debug
 export RUST_BACKTRACE=1
 
 # Debug build with symbols
-cargo build --all-features
+cd fs-core && cargo build --all-features
 
 # Use debugger
-gdb ./target/debug/aegisfs-mount
+cd fs-core && gdb ./target/debug/aegisfs-mount
 ```
 
 ### FUSE Debugging
 
 ```bash
 # Mount with debug output
-./target/debug/aegisfs-mount -d device.img /mnt/point
+cd fs-core && ./target/debug/aegisfs-mount -d device.img /mnt/point
 
 # Monitor FUSE operations
 fusermount -u /mnt/point  # unmount
@@ -284,10 +284,10 @@ mount.fuse device.img /mnt/point -o debug
 
 ```bash
 # Valgrind memory check
-valgrind --tool=memcheck --leak-check=full ./target/release/aegisfs-format
+cd fs-core && valgrind --tool=memcheck --leak-check=full ./target/release/aegisfs-format
 
 # Address sanitizer (nightly Rust)
-cargo +nightly run -Z sanitizer=address
+cd fs-core && cargo +nightly run -Z sanitizer=address
 ```
 
 ## Best Practices
@@ -334,7 +334,7 @@ cargo +nightly run -Z sanitizer=address
 
 3. **Build failures**:
    ```bash
-   cargo clean
+   cd fs-core && cargo clean
    ./scripts/ci-helpers.sh install-deps
    ```
 

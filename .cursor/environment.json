@@ -3,8 +3,8 @@
     "context": ".",
     "dockerfile": "Dockerfile"
   },
-  "install": "./scripts/ci-helpers.sh install-deps && ./scripts/ci-helpers.sh setup-fuse && cargo fetch",
-  "start": "cargo watch -x 'fmt --all' -x 'clippy --all-targets --all-features' -x 'test --lib'",
+  "install": "./scripts/ci-helpers.sh install-deps && ./scripts/ci-helpers.sh setup-fuse && cd fs-core && cargo fetch",
+  "start": "cd fs-core && cargo watch -x 'fmt --all' -x 'clippy --all-targets --all-features' -x 'test --lib'",
   "env": {
     "RUST_LOG": "debug",
     "RUST_BACKTRACE": "1",
@@ -17,7 +17,7 @@
     },
     {
       "name": "Test Watch",
-      "command": "cargo watch -x 'test --test persistence_test --test write_operations -- --test-threads=1'"
+      "command": "cd fs-core && cargo watch -x 'test --test persistence_test --test write_operations -- --test-threads=1'"
     },
     {
       "name": "Format & Lint",
@@ -25,7 +25,7 @@
     },
     {
       "name": "FUSE Debug",
-      "command": "export RUST_LOG=debug && export RUST_BACKTRACE=1 && echo 'Debug mode enabled. Run filesystem commands here.'"
+      "command": "export RUST_LOG=debug && export RUST_BACKTRACE=1 && cd fs-core && echo 'Debug mode enabled. Run filesystem commands here.'"
     },
     {
       "name": "Environment Setup",

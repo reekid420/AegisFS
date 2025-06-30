@@ -94,9 +94,11 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         key: release-${{ matrix.target }}
+        workspaces: fs-core
 
     - name: Build release binary
       run: |
+        cd fs-core
         cargo build --release --target ${{ matrix.target }} --all-features
 
     - name: Create release archive
@@ -106,9 +108,9 @@ jobs:
         
         # Copy binaries
         if [[ "${{ runner.os }}" == "Windows" ]]; then
-          cp ../target/${{ matrix.target }}/release/aegisfs-*${{ matrix.binary_suffix }} .
+          cp ../fs-core/target/${{ matrix.target }}/release/aegisfs-*${{ matrix.binary_suffix }} .
         else
-          cp ../target/${{ matrix.target }}/release/aegisfs-* .
+          cp ../fs-core/target/${{ matrix.target }}/release/aegisfs-* .
         fi
         
         # Copy documentation

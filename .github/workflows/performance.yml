@@ -38,6 +38,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         key: benchmarks
+        workspaces: fs-core
 
     - name: Install FUSE and system dependencies
       run: |
@@ -55,12 +56,11 @@ jobs:
         cargo install critcmp
 
     - name: Create benchmark directory
-      run: mkdir -p benches
+      run: mkdir -p fs-core/benches
 
     - name: Create basic benchmark if none exists
       run: |
         if [ ! -f "fs-core/benches/filesystem_ops.rs" ]; then
-          mkdir -p fs-core/benches
           cat > fs-core/benches/filesystem_ops.rs << 'EOF'
         use criterion::{black_box, criterion_group, criterion_main, Criterion};
         use std::fs::{File, remove_file};
@@ -105,18 +105,19 @@ jobs:
 
     - name: Add benchmark dependencies to Cargo.toml
       run: |
-        if ! grep -q "\[dev-dependencies\]" fs-core/Cargo.toml; then
-          echo "" >> fs-core/Cargo.toml
-          echo "[dev-dependencies]" >> fs-core/Cargo.toml
+        cd fs-core
+        if ! grep -q "\[dev-dependencies\]" Cargo.toml; then
+          echo "" >> Cargo.toml
+          echo "[dev-dependencies]" >> Cargo.toml
         fi
-        if ! grep -q "criterion" fs-core/Cargo.toml; then
-          echo 'criterion = { version = "0.5", features = ["html_reports"] }' >> fs-core/Cargo.toml
+        if ! grep -q "criterion" Cargo.toml; then
+          echo 'criterion = { version = "0.5", features = ["html_reports"] }' >> Cargo.toml
         fi
-        if ! grep -q "\[\[bench\]\]" fs-core/Cargo.toml; then
-          echo "" >> fs-core/Cargo.toml
-          echo "[[bench]]" >> fs-core/Cargo.toml
-          echo 'name = "filesystem_ops"' >> fs-core/Cargo.toml
-          echo 'harness = false' >> fs-core/Cargo.toml
+        if ! grep -q "\[\[bench\]\]" Cargo.toml; then
+          echo "" >> Cargo.toml
+          echo "[[bench]]" >> Cargo.toml
+          echo 'name = "filesystem_ops"' >> Cargo.toml
+          echo 'harness = false' >> Cargo.toml
         fi
 
     - name: Run benchmarks
@@ -216,6 +217,8 @@ jobs:
 
     - name: Cache dependencies
       uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: fs-core
 
     - name: Build for profiling
       run: |

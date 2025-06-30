@@ -1,17 +1,21 @@
 //! AegisFS feature modules
-//! 
+//!
 //! This module contains optional filesystem features that can be enabled
 //! or disabled based on configuration and feature flags.
 
-pub mod journaling;
 pub mod checksums;
+pub mod journaling;
 pub mod snapshot;
 
 // Re-export journaling types
-pub use journaling::{JournalManager, JournalConfig, JournalEntryType, Transaction, TransactionState};
+pub use journaling::{
+    JournalConfig, JournalEntryType, JournalManager, Transaction, TransactionState,
+};
 
 // Re-export checksum types
-pub use checksums::{ChecksumManager, ChecksumConfig, ChecksumAlgorithm, ScrubStats};
+pub use checksums::{ChecksumAlgorithm, ChecksumConfig, ChecksumManager, ScrubStats};
 
 // Re-export snapshot types
-pub use snapshot::{SnapshotManager, SnapshotConfig, SnapshotState, SnapshotMetadata, SnapshotStats}; 
+pub use snapshot::{
+    SnapshotConfig, SnapshotManager, SnapshotMetadata, SnapshotState, SnapshotStats,
+};
