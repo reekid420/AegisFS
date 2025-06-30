@@ -388,7 +388,7 @@ impl Filesystem for AegisFS {
         reply.error(ENOENT);
     }
 
-    fn getattr(&mut self, _req: &Request<'_>, ino: u64, reply: ReplyAttr) {
+    fn getattr(&mut self, _req: &Request<'_>, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
         log::debug!("GETATTR: inode={}", ino);
         if let Some(cached) = self.get_cached_inode(ino) {
             log::debug!("GETATTR: found inode {} in cache", ino);

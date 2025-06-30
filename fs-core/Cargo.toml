@@ -36,7 +36,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 
 # Filesystem and I/O
 libc = "0.2"
-fuser = { version = "0.12", optional = true }  # Optional for FUSE filesystem implementation
+fuser = { version = "0.15", optional = true }  # Optional for FUSE filesystem implementation
 
 # Cryptography
 aes-gcm = { version = "0.10", optional = true }
@@ -66,7 +66,7 @@ tempfile = "3.3"
 tokio = { version = "1.0", features = ["full", "rt-multi-thread"] }
 log = "0.4"
 env_logger = "0.10"
-fuser = { version = "0.12" }
+fuser = { version = "0.15" }
 rand = "0.8"
 
 [lib]
