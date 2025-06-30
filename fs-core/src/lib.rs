@@ -28,11 +28,46 @@ pub use blockdev::{
 /// Block device result type
 pub type BlockResult<T> = std::result::Result<T, BlockDeviceError>;
 
+#[cfg(feature = "fuse")]
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEntry,
     ReplyWrite, Request,
 };
+
+// Cross-platform file type definitions
+#[cfg(not(feature = "fuse"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileType {
+    Directory,
+    RegularFile,
+    Symlink,
+}
+
+// Cross-platform file attributes for non-FUSE builds
+#[cfg(not(feature = "fuse"))]
+#[derive(Debug, Clone)]
+pub struct FileAttr {
+    pub ino: u64,
+    pub size: u64,
+    pub blocks: u64,
+    pub atime: SystemTime,
+    pub mtime: SystemTime,
+    pub ctime: SystemTime,
+    pub crtime: SystemTime,
+    pub kind: FileType,
+    pub perm: u16,
+    pub nlink: u32,
+    pub uid: u32,
+    pub gid: u32,
+    pub rdev: u32,
+    pub flags: u32,
+    pub blksize: u32,
+}
+
+#[cfg(unix)]
 use libc::ENOENT;
+#[cfg(windows)]
+const ENOENT: i32 = 2; // Windows ERROR_FILE_NOT_FOUND
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -150,8 +185,26 @@ impl CachedInode {
                 kind,
                 perm,
                 nlink: if kind == FileType::Directory { 2 } else { 1 },
-                uid: unsafe { libc::getuid() },
-                gid: unsafe { libc::getgid() },
+                uid: {
+                    #[cfg(unix)]
+                    {
+                        unsafe { libc::getuid() }
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        1000 // Default user ID on non-Unix systems
+                    }
+                },
+                gid: {
+                    #[cfg(unix)]
+                    {
+                        unsafe { libc::getgid() }
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        1000 // Default group ID on non-Unix systems
+                    }
+                },
                 rdev: 0,
                 flags: 0,
                 blksize: 4096,
@@ -349,6 +402,7 @@ impl AegisFS {
     }
 }
 
+#[cfg(feature = "fuse")]
 impl Filesystem for AegisFS {
     fn lookup(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let name_str = match name.to_str() {

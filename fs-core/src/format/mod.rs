@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
+#[cfg(unix)]
 use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
 use std::sync::Arc;
@@ -326,8 +327,21 @@ impl Superblock {
     }
 }
 
-/// Get the size of a block device using ioctl
+/// Get the size of a block device using platform-specific methods
 fn get_block_device_size<P: AsRef<Path>>(device_path: P) -> io::Result<u64> {
+    #[cfg(unix)]
+    {
+        get_block_device_size_unix(device_path)
+    }
+    #[cfg(windows)]
+    {
+        get_block_device_size_windows(device_path)
+    }
+}
+
+/// Unix-specific block device size detection
+#[cfg(unix)]
+fn get_block_device_size_unix<P: AsRef<Path>>(device_path: P) -> io::Result<u64> {
     use std::fs::File;
     use std::os::unix::io::AsRawFd;
 
@@ -348,6 +362,38 @@ fn get_block_device_size<P: AsRef<Path>>(device_path: P) -> io::Result<u64> {
     Ok(size)
 }
 
+/// Windows-specific block device size detection
+#[cfg(windows)]
+fn get_block_device_size_windows<P: AsRef<Path>>(device_path: P) -> io::Result<u64> {
+    use std::fs::File;
+    use std::os::windows::io::AsRawHandle;
+
+    let metadata = std::fs::metadata(&device_path)?;
+    
+    // For regular files, just return the file size
+    if metadata.is_file() {
+        return Ok(metadata.len());
+    }
+
+    // For block devices on Windows, we need to use different APIs
+    let file = File::open(device_path)?;
+    let handle = file.as_raw_handle();
+
+    unsafe {
+        use winapi::um::fileapi::GetFileSizeEx;
+        use winapi::um::winnt::LARGE_INTEGER;
+
+        let mut size: LARGE_INTEGER = std::mem::zeroed();
+        
+        if GetFileSizeEx(handle as _, &mut size) != 0 {
+            Ok(*size.QuadPart() as u64)
+        } else {
+            // Fallback to regular file size
+            Ok(metadata.len())
+        }
+    }
+}
+
 /// Format a block device with the AegisFS filesystem
 pub async fn format_device<P: AsRef<Path>>(
     device_path: P,
@@ -364,8 +410,23 @@ pub async fn format_device<P: AsRef<Path>>(
     let path = device_path.as_ref();
     let metadata = std::fs::metadata(path).map_err(FormatError::Io)?;
 
-    // For block devices, get the actual device size using ioctl
-    if metadata.file_type().is_block_device() {
+    // For block devices, get the actual device size using platform-specific methods
+    let is_block_device = {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileTypeExt;
+            metadata.file_type().is_block_device()
+        }
+        #[cfg(windows)]
+        {
+            // On Windows, we typically work with files or volumes
+            // Check if it's a volume (like \\.\C:) or a regular file
+            let path_str = path.to_string_lossy();
+            path_str.starts_with(r"\\.\") || !metadata.is_file()
+        }
+    };
+
+    if is_block_device {
         let device_size = get_block_device_size(path)?;
         const TOLERANCE: u64 = 1024 * 1024; // 1MB tolerance
 

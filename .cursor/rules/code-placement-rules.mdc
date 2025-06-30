@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+if making a new file or moving a file refer too [dev-roadmap.md](mdc:dev-roadmap.md) for the file structure and put the file where best fit

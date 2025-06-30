@@ -47,8 +47,21 @@ impl FileBackedBlockDevice {
         })
     }
 
-    /// Get the size of a block device using ioctl
+    /// Get the size of a block device using platform-specific methods
     fn get_block_device_size(path: &Path) -> Result<u64> {
+        #[cfg(unix)]
+        {
+            Self::get_block_device_size_unix(path)
+        }
+        #[cfg(windows)]
+        {
+            Self::get_block_device_size_windows(path)
+        }
+    }
+
+    /// Unix-specific block device size detection
+    #[cfg(unix)]
+    fn get_block_device_size_unix(path: &Path) -> Result<u64> {
         use std::fs::File as StdFile;
         use std::os::unix::fs::FileTypeExt;
         use std::os::unix::io::AsRawFd;
@@ -74,6 +87,37 @@ impl FileBackedBlockDevice {
         }
 
         Ok(size)
+    }
+
+    /// Windows-specific block device size detection
+    #[cfg(windows)]
+    fn get_block_device_size_windows(path: &Path) -> Result<u64> {
+        use std::fs::File as StdFile;
+        use std::os::windows::io::AsRawHandle;
+        use winapi::um::fileapi::GetFileSizeEx;
+        use winapi::um::winnt::LARGE_INTEGER;
+
+        let metadata = std::fs::metadata(path)?;
+        
+        // For regular files, just return the file size
+        if metadata.is_file() {
+            return Ok(metadata.len());
+        }
+
+        // For block devices on Windows, we need to use different APIs
+        let file = StdFile::open(path)?;
+        let handle = file.as_raw_handle();
+
+        let mut size: LARGE_INTEGER = unsafe { std::mem::zeroed() };
+        
+        unsafe {
+            if GetFileSizeEx(handle as _, &mut size) != 0 {
+                Ok(*size.QuadPart() as u64)
+            } else {
+                // Fallback to regular file size
+                Ok(metadata.len())
+            }
+        }
     }
 
     /// Open an existing file-backed block device

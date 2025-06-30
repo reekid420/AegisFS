@@ -1,5 +1,6 @@
-//! AegisFS scrub CLI tool for filesystem verification and repair
+//! Scrub command for filesystem verification and repair
 
+use anyhow::Result;
 use clap::Parser;
 use log::{error, info, warn};
 use std::path::PathBuf;
@@ -9,77 +10,70 @@ use std::time::Instant;
 use aegisfs::blockdev::FileBackedBlockDevice;
 use aegisfs::modules::{ChecksumConfig, ChecksumManager};
 
+/// Check and repair filesystem integrity
 #[derive(Parser)]
-#[command(author, version, about = "AegisFS filesystem scrub tool", long_about = None)]
-struct Cli {
+#[command(about = "Check and repair AegisFS filesystem integrity")]
+pub struct ScrubArgs {
     /// Device path to scrub
-    device: PathBuf,
-
-    /// Enable verbose output
-    #[arg(short, long)]
-    verbose: bool,
+    pub device: PathBuf,
 
     /// Only verify, don't attempt repairs
     #[arg(short = 'n', long = "dry-run")]
-    dry_run: bool,
+    pub dry_run: bool,
 
     /// Force scrub even if one is already running
     #[arg(short, long)]
-    force: bool,
+    pub force: bool,
 
     /// Number of threads to use for scrubbing
     #[arg(short = 't', long = "threads", default_value = "2")]
-    threads: usize,
+    pub threads: usize,
 
     /// Show statistics only, don't perform scrub
     #[arg(short = 's', long = "stats")]
-    stats_only: bool,
+    pub stats_only: bool,
 
     /// Stop an ongoing scrub
     #[arg(long = "stop")]
-    stop: bool,
+    pub stop: bool,
 
     /// Clear the bad blocks list
     #[arg(long = "clear-bad-blocks")]
-    clear_bad_blocks: bool,
+    pub clear_bad_blocks: bool,
 
     /// List known bad blocks
     #[arg(short = 'l', long = "list-bad-blocks")]
-    list_bad_blocks: bool,
+    pub list_bad_blocks: bool,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
-    let cli = Cli::parse();
-
+pub async fn run(args: ScrubArgs) -> Result<()> {
     // Open device
     let device = Arc::new(
-        FileBackedBlockDevice::open(&cli.device, cli.dry_run) // Read-only if dry-run
+        FileBackedBlockDevice::open(&args.device, args.dry_run) // Read-only if dry-run
             .await
-            .map_err(|e| format!("Failed to open device: {}", e))?,
+            .map_err(|e| anyhow::anyhow!("Failed to open device: {}", e))?,
     );
 
     // Configure checksum manager
     let mut config = ChecksumConfig::default();
-    config.auto_repair = !cli.dry_run;
-    config.scrub_threads = cli.threads;
+    config.auto_repair = !args.dry_run;
+    config.scrub_threads = args.threads;
 
     let mut manager = ChecksumManager::new(device, config);
     manager
         .init()
         .await
-        .map_err(|e| format!("Failed to initialize checksum manager: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to initialize checksum manager: {}", e))?;
 
     // Handle various operations
-    if cli.stop {
+    if args.stop {
         info!("Stopping ongoing scrub...");
         manager.shutdown().await?;
         info!("Scrub stopped");
         return Ok(());
     }
 
-    if cli.clear_bad_blocks {
+    if args.clear_bad_blocks {
         let bad_blocks = manager.get_bad_blocks();
         if bad_blocks.is_empty() {
             println!("No bad blocks to clear");
@@ -93,7 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    if cli.list_bad_blocks {
+    if args.list_bad_blocks {
         let bad_blocks = manager.get_bad_blocks();
         if bad_blocks.is_empty() {
             println!("No bad blocks found");
@@ -106,15 +100,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    if cli.stats_only {
+    if args.stats_only {
         let stats = manager.get_scrub_stats();
         print_stats(&stats);
         return Ok(());
     }
 
     // Perform the scrub
-    info!("Starting filesystem scrub on {:?}", cli.device);
-    if cli.dry_run {
+    info!("Starting filesystem scrub on {:?}", args.device);
+    if args.dry_run {
         info!("Running in dry-run mode - no repairs will be attempted");
     }
 
@@ -187,4 +181,4 @@ fn print_stats(stats: &aegisfs::modules::ScrubStats) {
         let error_rate = (stats.blocks_corrupted as f64 / stats.blocks_scrubbed as f64) * 100.0;
         println!("  Error rate:          {:.4}%", error_rate);
     }
-}
+} 

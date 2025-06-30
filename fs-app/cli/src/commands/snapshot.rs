@@ -1,5 +1,6 @@
-//! AegisFS snapshot management CLI tool
+//! Snapshot command for managing AegisFS snapshots
 
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use log::{error, info};
 use std::collections::HashMap;
@@ -9,22 +10,19 @@ use std::sync::Arc;
 use aegisfs::blockdev::FileBackedBlockDevice;
 use aegisfs::modules::{SnapshotConfig, SnapshotManager};
 
+/// Manage snapshots
 #[derive(Parser)]
-#[command(author, version, about = "AegisFS snapshot management tool", long_about = None)]
-struct Cli {
+#[command(about = "Manage AegisFS snapshots")]
+pub struct SnapshotArgs {
     /// Device path to operate on
-    device: PathBuf,
-
-    /// Enable verbose output
-    #[arg(short, long)]
-    verbose: bool,
+    pub device: PathBuf,
 
     #[command(subcommand)]
-    command: Commands,
+    pub command: SnapshotCommands,
 }
 
 #[derive(Subcommand)]
-enum Commands {
+pub enum SnapshotCommands {
     /// Create a new snapshot
     Create {
         /// Name for the snapshot
@@ -66,26 +64,22 @@ enum Commands {
     Stats,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
-    let cli = Cli::parse();
-
+pub async fn run(args: SnapshotArgs) -> Result<()> {
     // Initialize snapshot manager
     let device = Arc::new(
-        FileBackedBlockDevice::open(&cli.device, false) // Open in read-write mode
+        FileBackedBlockDevice::open(&args.device, false) // Open in read-write mode
             .await
-            .map_err(|e| format!("Failed to open device: {}", e))?,
+            .map_err(|e| anyhow::anyhow!("Failed to open device: {}", e))?,
     );
 
     let mut manager = SnapshotManager::new(device, SnapshotConfig::default());
     manager
         .init()
         .await
-        .map_err(|e| format!("Failed to initialize snapshot manager: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to initialize snapshot manager: {}", e))?;
 
-    match cli.command {
-        Commands::Create {
+    match args.command {
+        SnapshotCommands::Create {
             name,
             description,
             tags,
@@ -100,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     tag_map.insert(parts[0].to_string(), parts[1].to_string());
                 } else {
                     error!("Invalid tag format: {}. Use key=value", tag);
-                    return Err("Invalid tag format".into());
+                    return Err(anyhow::anyhow!("Invalid tag format"));
                 }
             }
 
@@ -119,7 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        Commands::List { long } => {
+        SnapshotCommands::List { long } => {
             let snapshots = manager.list_snapshots();
 
             if snapshots.is_empty() {
@@ -158,7 +152,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        Commands::Delete { snapshot } => {
+        SnapshotCommands::Delete { snapshot } => {
             // Try to parse as ID first
             let snapshot_id = if let Ok(id) = snapshot.parse::<u64>() {
                 id
@@ -168,7 +162,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     snap.id
                 } else {
                     error!("Snapshot '{}' not found", snapshot);
-                    return Err("Snapshot not found".into());
+                    return Err(anyhow::anyhow!("Snapshot not found"));
                 }
             };
 
@@ -184,7 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        Commands::Rollback { snapshot, force } => {
+        SnapshotCommands::Rollback { snapshot, force } => {
             // Try to parse as ID first
             let snapshot_id = if let Ok(id) = snapshot.parse::<u64>() {
                 id
@@ -194,7 +188,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     snap.id
                 } else {
                     error!("Snapshot '{}' not found", snapshot);
-                    return Err("Snapshot not found".into());
+                    return Err(anyhow::anyhow!("Snapshot not found"));
                 }
             };
 
@@ -226,7 +220,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        Commands::Stats => {
+        SnapshotCommands::Stats => {
             let stats = manager.get_snapshot_stats();
 
             println!("Snapshot Statistics:");
@@ -255,4 +249,4 @@ fn format_bytes(bytes: u64) -> String {
     }
 
     format!("{:.2} {}", size, UNITS[unit_index])
-}
+} 
