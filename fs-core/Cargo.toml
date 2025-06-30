@@ -68,6 +68,7 @@ log = "0.4"
 env_logger = "0.10"
 fuser = { version = "0.15" }
 rand = "0.8"
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [lib]
 name = "aegisfs"
@@ -90,3 +91,7 @@ required-features = ["fuse"]
 name = "aegisfs-format"
 path = "src/bin/format.rs"
 required-features = ["fuse"]
+
+[[bench]]
+name = "filesystem_ops"
+harness = false

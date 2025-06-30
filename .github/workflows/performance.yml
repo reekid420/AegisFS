@@ -55,75 +55,10 @@ jobs:
         cargo install cargo-criterion
         cargo install critcmp
 
-    - name: Create benchmark directory
-      run: mkdir -p fs-core/benches
-
-    - name: Create basic benchmark if none exists
-      run: |
-        if [ ! -f "fs-core/benches/filesystem_ops.rs" ]; then
-          cat > fs-core/benches/filesystem_ops.rs << 'EOF'
-        use criterion::{black_box, criterion_group, criterion_main, Criterion};
-        use std::fs::{File, remove_file};
-        use std::io::{Write, Read};
-        use tempfile::TempDir;
-
-        fn benchmark_file_operations(c: &mut Criterion) {
-            let temp_dir = TempDir::new().unwrap();
-            let file_path = temp_dir.path().join("benchmark.txt");
-            
-            c.bench_function("file_create_write_1kb", |b| {
-                let data = vec![0u8; 1024];
-                b.iter(|| {
-                    let mut file = File::create(&file_path).unwrap();
-                    file.write_all(black_box(&data)).unwrap();
-                    file.sync_all().unwrap();
-                    remove_file(&file_path).unwrap();
-                });
-            });
-            
-            // Create a test file for read benchmark
-            let mut file = File::create(&file_path).unwrap();
-            let data = vec![42u8; 1024];
-            file.write_all(&data).unwrap();
-            file.sync_all().unwrap();
-            drop(file);
-            
-            c.bench_function("file_read_1kb", |b| {
-                b.iter(|| {
-                    let mut file = File::open(&file_path).unwrap();
-                    let mut buffer = Vec::new();
-                    file.read_to_end(&mut buffer).unwrap();
-                    black_box(buffer);
-                });
-            });
-        }
-
-        criterion_group!(benches, benchmark_file_operations);
-        criterion_main!(benches);
-        EOF
-        fi
-
-    - name: Add benchmark dependencies to Cargo.toml
-      run: |
-        cd fs-core
-        if ! grep -q "\[dev-dependencies\]" Cargo.toml; then
-          echo "" >> Cargo.toml
-          echo "[dev-dependencies]" >> Cargo.toml
-        fi
-        if ! grep -q "criterion" Cargo.toml; then
-          echo 'criterion = { version = "0.5", features = ["html_reports"] }' >> Cargo.toml
-        fi
-        if ! grep -q "\[\[bench\]\]" Cargo.toml; then
-          echo "" >> Cargo.toml
-          echo "[[bench]]" >> Cargo.toml
-          echo 'name = "filesystem_ops"' >> Cargo.toml
-          echo 'harness = false' >> Cargo.toml
-        fi
-
     - name: Run benchmarks
       run: |
         cd fs-core
-        cargo criterion --message-format=json | tee ../benchmark-results.json
+        cargo bench --message-format=json | tee ../benchmark-results.json
 
     - name: Store benchmark result for main branch
       if: github.ref == 'refs/heads/main'
