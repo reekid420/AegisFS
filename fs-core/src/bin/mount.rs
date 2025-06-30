@@ -27,7 +27,8 @@ struct Args {
     debug: bool,
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     // Parse command-line arguments
     let args = Args::parse();
     
@@ -73,7 +74,9 @@ fn main() -> anyhow::Result<()> {
     info!("Mounting AegisFS from '{}' to '{}'", args.source.display(), mountpoint.display());
     
     // Create a new filesystem instance
-    let fs = AegisFS::new();
+    let fs = AegisFS::from_device(&args.source)
+        .await
+        .with_context(|| format!("Failed to open AegisFS on device: {}", args.source.display()))?;
     
     // Prepare mount options
     let options = vec![

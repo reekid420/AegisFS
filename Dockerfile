@@ -1,31 +1,90 @@
-# Base image with Rust and common build tools
-FROM rust:latest
+# Multi-stage Docker build for AegisFS development and testing
+
+# Stage 1: Base development environment
+FROM rust:1.75-slim as base
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    clang \
-    cmake \
-    fuse \
-    libfuse-dev \
     pkg-config \
-    libssl-dev \
+    libfuse3-dev \
+    fuse3 \
+    build-essential \
+    libc6-dev \
+    curl \
+    git \
+    sudo \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Rust components
-RUN rustup component add rustfmt clippy
+# Create non-root user for development
+RUN useradd -m -s /bin/bash developer && \
+    usermod -a -G fuse developer && \
+    echo 'developer ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
-# Create non-root user
-RUN useradd -ms /bin/bash developer
+# Install additional Rust components
+RUN rustup component add rustfmt clippy llvm-tools-preview
+
+# Install useful cargo tools
+RUN cargo install cargo-audit cargo-deny cargo-llvm-cov cargo-criterion
+
+WORKDIR /workspace
 USER developer
-WORKDIR /home/developer/workspace
 
-# Pre-build cargo registry for faster builds
-RUN cargo init --bin dummy && \
-    cd dummy && \
-    echo 'fuser = "0.12"' >> Cargo.toml && \
-    cargo build --release && \
-    cd .. && \
-    rm -rf dummy
+# Stage 2: CI testing environment
+FROM base as ci
 
-# Default command
+# Copy the project
+COPY --chown=developer:developer . .
+
+# Pre-build dependencies for faster CI runs
+RUN cargo fetch
+
+# Enable FUSE in container
+RUN sudo modprobe fuse || true
+
+# Default command for CI
+CMD ["cargo", "test", "--all-features"]
+
+# Stage 3: Development environment with additional tools
+FROM base as dev
+
+# Install development tools
+RUN cargo install cargo-watch cargo-expand
+
+# Install debugging tools
+RUN apt-get update && apt-get install -y \
+    gdb \
+    valgrind \
+    strace \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy project files
+COPY --chown=developer:developer . .
+
+# Build the project
+RUN cargo build --all-features
+
+# Expose any ports needed for development
+EXPOSE 8080
+
+# Default to bash for interactive development
 CMD ["/bin/bash"]
+
+# Stage 4: Minimal runtime environment
+FROM debian:bookworm-slim as runtime
+
+RUN apt-get update && apt-get install -y \
+    fuse3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create runtime user
+RUN useradd -m -s /bin/bash aegisfs && \
+    usermod -a -G fuse aegisfs
+
+# Copy built binaries from development stage
+COPY --from=dev --chown=aegisfs:aegisfs /workspace/target/release/aegisfs-* /usr/local/bin/
+
+USER aegisfs
+WORKDIR /home/aegisfs
+
+# Default to the mount command
+CMD ["aegisfs-mount", "--help"]

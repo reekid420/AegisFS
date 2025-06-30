@@ -6,6 +6,7 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::fs::OpenOptions;
 use std::io::Write;
+use tokio::runtime::Runtime;
 
 use aegisfs::format::{self, FormatError};
 
@@ -29,7 +30,8 @@ struct Args {
     debug: bool,
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     // Parse command-line arguments
     let args = Args::parse();
     
@@ -117,7 +119,7 @@ fn main() -> anyhow::Result<()> {
         ));
     }
     
-    info!("Formatting with size: {} bytes ({} GB)", partition_size, partition_size / (1024 * 1024 * 1024));
+    info!("Formatting with size: {} bytes ({:.2} GiB)", partition_size, partition_size as f64 / (1024.0 * 1024.0 * 1024.0));
     
     // Confirm before formatting
     if !args.force {
@@ -141,6 +143,7 @@ fn main() -> anyhow::Result<()> {
     
     // Format the device with our filesystem
     format::format_device(&args.device, args.size, Some("AegisFS Volume"))
+        .await
         .with_context(|| format!("Failed to format device: {}", args.device.display()))?;
     
     info!("Successfully formatted {} as AegisFS", args.device.display());

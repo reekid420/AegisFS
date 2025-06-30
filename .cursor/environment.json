@@ -1,0 +1,35 @@
+{
+  "build": {
+    "context": ".",
+    "dockerfile": "Dockerfile"
+  },
+  "install": "./scripts/ci-helpers.sh install-deps && ./scripts/ci-helpers.sh setup-fuse && cargo fetch",
+  "start": "cargo watch -x 'fmt --all' -x 'clippy --all-targets --all-features' -x 'test --lib'",
+  "env": {
+    "RUST_LOG": "debug",
+    "RUST_BACKTRACE": "1",
+    "CI": "false"
+  },
+  "terminals": [
+    {
+      "name": "CI Helper",
+      "command": "./scripts/ci-helpers.sh help"
+    },
+    {
+      "name": "Test Watch",
+      "command": "cargo watch -x 'test --test persistence_test --test write_operations -- --test-threads=1'"
+    },
+    {
+      "name": "Format & Lint",
+      "command": "./scripts/ci-helpers.sh full-ci"
+    },
+    {
+      "name": "FUSE Debug",
+      "command": "export RUST_LOG=debug && export RUST_BACKTRACE=1 && echo 'Debug mode enabled. Run filesystem commands here.'"
+    },
+    {
+      "name": "Environment Setup",
+      "command": "echo 'Optional CI/CD Environment Variables:' && echo 'CODECOV_TOKEN=your_codecov_token_here' && echo 'DOCKERHUB_USERNAME=your_docker_username' && echo 'DOCKERHUB_TOKEN=your_docker_token' && echo '' && echo 'Set these in your Cursor settings for enhanced CI/CD features'"
+    }
+  ]
+}

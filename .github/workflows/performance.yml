@@ -1,0 +1,237 @@
+name: Performance Monitoring
+
+on:
+  schedule:
+    # Run performance tests daily at 3 AM UTC
+    - cron: '0 3 * * *'
+  push:
+    branches: [ main ]
+    paths:
+      - 'fs-core/src/**'
+      - 'fs-core/benches/**'
+      - 'Cargo.toml'
+      - 'fs-core/Cargo.toml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'fs-core/src/**'
+      - 'fs-core/benches/**'
+      - 'Cargo.toml'
+      - 'fs-core/Cargo.toml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmark:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Need full history for comparison
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: benchmarks
+
+    - name: Install FUSE and system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y fuse3 libfuse3-dev pkg-config
+
+    - name: Enable FUSE for user
+      run: |
+        sudo modprobe fuse
+        sudo chmod 666 /dev/fuse
+
+    - name: Install benchmark tools
+      run: |
+        cargo install cargo-criterion
+        cargo install critcmp
+
+    - name: Create benchmark directory
+      run: mkdir -p benches
+
+    - name: Create basic benchmark if none exists
+      run: |
+        if [ ! -f "fs-core/benches/filesystem_ops.rs" ]; then
+          mkdir -p fs-core/benches
+          cat > fs-core/benches/filesystem_ops.rs << 'EOF'
+        use criterion::{black_box, criterion_group, criterion_main, Criterion};
+        use std::fs::{File, remove_file};
+        use std::io::{Write, Read};
+        use tempfile::TempDir;
+
+        fn benchmark_file_operations(c: &mut Criterion) {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("benchmark.txt");
+            
+            c.bench_function("file_create_write_1kb", |b| {
+                let data = vec![0u8; 1024];
+                b.iter(|| {
+                    let mut file = File::create(&file_path).unwrap();
+                    file.write_all(black_box(&data)).unwrap();
+                    file.sync_all().unwrap();
+                    remove_file(&file_path).unwrap();
+                });
+            });
+            
+            // Create a test file for read benchmark
+            let mut file = File::create(&file_path).unwrap();
+            let data = vec![42u8; 1024];
+            file.write_all(&data).unwrap();
+            file.sync_all().unwrap();
+            drop(file);
+            
+            c.bench_function("file_read_1kb", |b| {
+                b.iter(|| {
+                    let mut file = File::open(&file_path).unwrap();
+                    let mut buffer = Vec::new();
+                    file.read_to_end(&mut buffer).unwrap();
+                    black_box(buffer);
+                });
+            });
+        }
+
+        criterion_group!(benches, benchmark_file_operations);
+        criterion_main!(benches);
+        EOF
+        fi
+
+    - name: Add benchmark dependencies to Cargo.toml
+      run: |
+        if ! grep -q "\[dev-dependencies\]" fs-core/Cargo.toml; then
+          echo "" >> fs-core/Cargo.toml
+          echo "[dev-dependencies]" >> fs-core/Cargo.toml
+        fi
+        if ! grep -q "criterion" fs-core/Cargo.toml; then
+          echo 'criterion = { version = "0.5", features = ["html_reports"] }' >> fs-core/Cargo.toml
+        fi
+        if ! grep -q "\[\[bench\]\]" fs-core/Cargo.toml; then
+          echo "" >> fs-core/Cargo.toml
+          echo "[[bench]]" >> fs-core/Cargo.toml
+          echo 'name = "filesystem_ops"' >> fs-core/Cargo.toml
+          echo 'harness = false' >> fs-core/Cargo.toml
+        fi
+
+    - name: Run benchmarks
+      run: |
+        cd fs-core
+        cargo criterion --message-format=json | tee ../benchmark-results.json
+
+    - name: Store benchmark result for main branch
+      if: github.ref == 'refs/heads/main'
+      run: |
+        # Store results for future comparison
+        mkdir -p .github/benchmark-data
+        cp benchmark-results.json .github/benchmark-data/main-$(date +%Y%m%d-%H%M%S).json
+        # Keep only the latest 30 benchmark files to avoid repo bloat
+        ls -t .github/benchmark-data/main-*.json | tail -n +31 | xargs -r rm
+
+    - name: Compare with main branch (PR only)
+      if: github.event_name == 'pull_request'
+      run: |
+        # Download latest main branch benchmark if available
+        if [ -f ".github/benchmark-data/main-*.json" ]; then
+          LATEST_MAIN=$(ls -t .github/benchmark-data/main-*.json | head -n 1)
+          echo "Comparing with: $LATEST_MAIN"
+          
+          # Convert criterion JSON to format critcmp can understand
+          # This is a simplified comparison - in a real scenario you'd want more sophisticated analysis
+          echo "Performance comparison with main branch:"
+          echo "Current PR results:"
+          tail -10 benchmark-results.json
+          
+          echo "Main branch baseline:"
+          tail -10 "$LATEST_MAIN"
+        else
+          echo "No baseline benchmark found for comparison"
+        fi
+
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v3
+      with:
+        name: benchmark-results-${{ github.sha }}
+        path: |
+          benchmark-results.json
+          fs-core/target/criterion/
+
+    - name: Generate performance report
+      run: |
+        echo "## Performance Benchmark Results" > performance-report.md
+        echo "" >> performance-report.md
+        echo "Benchmark run completed on $(date)" >> performance-report.md
+        echo "" >> performance-report.md
+        echo "### Summary" >> performance-report.md
+        
+        # Extract key metrics from criterion output
+        if [ -f "benchmark-results.json" ]; then
+          echo "- Benchmark data available in artifacts" >> performance-report.md
+          echo "- Total benchmarks: $(grep -c '"type":"benchmark"' benchmark-results.json)" >> performance-report.md
+        fi
+        
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          echo "" >> performance-report.md
+          echo "### PR Impact" >> performance-report.md
+          echo "This PR's performance impact will be analyzed against the main branch baseline." >> performance-report.md
+        fi
+
+    - name: Comment PR with performance results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          
+          if (fs.existsSync('performance-report.md')) {
+            const report = fs.readFileSync('performance-report.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });
+          }
+
+  memory-profile:
+    name: Memory Profiling
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install profiling tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y fuse3 libfuse3-dev pkg-config valgrind
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Build for profiling
+      run: |
+        cd fs-core
+        cargo build --release
+
+    - name: Run memory profile
+      run: |
+        cd fs-core
+        # Simple memory test - in practice you'd want more comprehensive profiling
+        valgrind --tool=memcheck --leak-check=full --show-leak-kinds=all \
+          --track-origins=yes --verbose --log-file=../valgrind-output.txt \
+          ./target/release/aegisfs-format --help || true
+
+    - name: Upload memory profiling results
+      uses: actions/upload-artifact@v3
+      with:
+        name: memory-profile-${{ github.sha }}
+        path: valgrind-output.txt 

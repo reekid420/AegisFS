@@ -1,9 +1,15 @@
 //! AegisFS on-disk format implementation
 
-use std::io::{self, Read, Write, Seek, SeekFrom};
+use std::io::{self, Read, Write, Seek, SeekFrom, Cursor};
+use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
+use std::sync::Arc;
+use async_trait::async_trait;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use thiserror::Error;
+
+use crate::blockdev::BlockDevice;
+use crate::layout::DiskFsTrait;
 
 /// Magic number for AegisFS filesystem
 const AEGISFS_MAGIC: &[u8; 8] = b"AEGISFS\x00";
@@ -185,7 +191,7 @@ impl Default for Superblock {
             free_blocks: 0,
             inode_count: 0,
             free_inodes: 0,
-            root_inode: 2, // Inode 2 is traditionally root
+            root_inode: 1, // FUSE root inode number
             last_mount: 0,
             last_write: 0,
             uuid,
@@ -319,71 +325,54 @@ impl Superblock {
     }
 }
 
-/// Format a block device or file as an AegisFS filesystem
-pub fn format_device<P: AsRef<Path>>(
+/// Get the size of a block device using ioctl
+fn get_block_device_size<P: AsRef<Path>>(device_path: P) -> io::Result<u64> {
+    use std::fs::File;
+    use std::os::unix::io::AsRawFd;
+    
+    let file = File::open(device_path)?;
+    let fd = file.as_raw_fd();
+    
+    // Use ioctl to get block device size
+    // BLKGETSIZE64 = 0x80081272 on Linux
+    const BLKGETSIZE64: libc::c_ulong = 0x80081272;
+    
+    let mut size: u64 = 0;
+    let result = unsafe {
+        libc::ioctl(fd, BLKGETSIZE64, &mut size as *mut u64)
+    };
+    
+    if result == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    
+    Ok(size)
+}
+
+/// Format a block device with the AegisFS filesystem
+pub async fn format_device<P: AsRef<Path>>(
     device_path: P,
     size_gb: u64,
     volume_name: Option<&str>,
 ) -> Result<(), FormatError> {
-    let size = size_gb * 1024 * 1024 * 1024; // Convert GB to bytes
+    use crate::blockdev::BlockDevice;
+    use crate::layout::DiskFs;
+    use std::sync::Arc;
     
-    // Open the device/file in read-write mode
-    let mut file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(device_path.as_ref())
-        .map_err(|e| FormatError::Io(io::Error::new(
-            io::ErrorKind::Other,
-            format!("Failed to open device {:?}: {}", device_path.as_ref(), e)
-        )))?;
+    let mut size = size_gb * 1024 * 1024 * 1024; // Convert GB to bytes
     
-    // Get the device path as a string for blockdev command
-    let device_path = device_path.as_ref().to_string_lossy().to_string();
+    // Check if the target path exists and is a block device
+    let path = device_path.as_ref();
+    let metadata = std::fs::metadata(path).map_err(FormatError::Io)?;
     
-    // Get device size using blockdev command for accurate size
-    let output = std::process::Command::new("blockdev")
-        .args(["--getsize64", &device_path])
-        .output()
-        .map_err(|e| FormatError::Io(io::Error::new(
-            io::ErrorKind::Other,
-            format!("Failed to get device size using blockdev: {}", e)
-        )))?;
-        
-    if !output.status.success() {
-        return Err(FormatError::Io(io::Error::new(
-            io::ErrorKind::Other,
-            format!("blockdev command failed: {}", String::from_utf8_lossy(&output.stderr))
-        )));
-    }
-    
-    let device_size = String::from_utf8(output.stdout)
-        .map_err(|_| FormatError::Io(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Failed to parse blockdev output as UTF-8"
-        )))?
-        .trim()
-        .parse::<u64>()
-        .map_err(|e| FormatError::Io(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Failed to parse device size: {}", e)
-        )))?;
-    
-    // Only set length if it's a regular file, not a block device
-    let metadata = file.metadata().map_err(|e| FormatError::Io(io::Error::new(
-        io::ErrorKind::Other,
-        format!("Failed to get device metadata: {}", e)
-    )))?;
-    
-    if metadata.file_type().is_file() {
-        file.set_len(size).map_err(|e| FormatError::Io(io::Error::new(
-            io::ErrorKind::Other,
-            format!("Failed to set file size: {}", e)
-        )))?;
-    } else if device_size < size {
-        // For block devices, verify the device is large enough, with a small tolerance (1MB)
+    // For block devices, get the actual device size using ioctl
+    if metadata.file_type().is_block_device() {
+        let device_size = get_block_device_size(path)?;
         const TOLERANCE: u64 = 1024 * 1024; // 1MB tolerance
         
-        if size - device_size > TOLERANCE {
+        log::info!("Block device size: {} bytes", device_size);
+        
+        if device_size < size && (size - device_size) > TOLERANCE {
             return Err(FormatError::Io(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!(
@@ -391,172 +380,44 @@ pub fn format_device<P: AsRef<Path>>(
                     device_size, size, TOLERANCE
                 )
             )));
+        } else if device_size < size {
+            // If we get here, the device is slightly smaller than requested but within tolerance
+            // We'll use the actual device size instead of the requested size
+            log::info!(
+                "Using device size ({} bytes) which is slightly smaller than requested ({} bytes) but within tolerance",
+                device_size, size
+            );
+            
+            // Update the size to match the actual device size
+            size = device_size;
         }
         
-        // If we get here, the device is slightly smaller than requested but within tolerance
-        // We'll use the actual device size instead of the requested size
-        log::info!(
-            "Using device size ({} bytes) which is slightly smaller than requested ({} bytes) but within tolerance",
-            device_size, size
-        );
-        
-        // Update the size to match the actual device size
-        let size = device_size;
+        // For block devices, always use the actual device size
+        size = device_size;
+        log::info!("Using full block device size: {} bytes ({:.2} GiB)", size, size as f64 / (1024.0 * 1024.0 * 1024.0));
     }
     
-    // Create and write superblock
-    let mut superblock = Superblock::new(size, volume_name)?;
-    superblock.write_to(&mut file)?;
+    // Create or open the device/file
+    use crate::blockdev::FileBackedBlockDevice;
+    let mut device = if path.exists() {
+        FileBackedBlockDevice::open(device_path, false).await
+    } else {
+        FileBackedBlockDevice::create(device_path, size).await
+    }.map_err(|e| FormatError::Io(io::Error::new(
+        io::ErrorKind::Other,
+        format!("Failed to open/create device: {}", e)
+    )))?;
     
-    // Calculate block counts and positions
-    let block_size = superblock.block_size as u64;
-    let blocks_per_group = 8 * block_size; // 1 bit per block
+    // Format the device using DiskFs implementation
+    let format_result = DiskFs::format(&mut device, size, volume_name).await;
     
-    // Block allocation bitmap (1 bit per block, rounded up to nearest block)
-    let bitmap_blocks = (superblock.block_count + blocks_per_group - 1) / blocks_per_group;
-    let inode_table_blocks = (superblock.inode_count * 128 + block_size - 1) / block_size; // 128 bytes per inode
+    // Convert FsError to FormatError
+    format_result.map_err(|e| FormatError::Io(io::Error::new(
+        io::ErrorKind::Other,
+        format!("Failed to format device: {:?}", e)
+    )))?;
     
-    // Initialize block allocation bitmap
-    file.seek(SeekFrom::Start(block_size))?; // Skip superblock
-    
-    // Mark superblock and bitmaps as used
-    let mut used_blocks = 1 + bitmap_blocks; // Superblock + bitmaps
-    let mut bitmap = vec![0u8; (bitmap_blocks * block_size) as usize];
-    
-    // Mark used blocks
-    for i in 0..used_blocks {
-        let byte = (i / 8) as usize;
-        let bit = i % 8;
-        if byte < bitmap.len() {
-            bitmap[byte] |= 1 << bit;
-        }
-    }
-    
-    // Write bitmap with better error context
-    file.write_all(&bitmap).map_err(|e| {
-        FormatError::Io(io::Error::new(
-            e.kind(),
-            format!("Failed to write bitmap at position {}: {}", 
-                   block_size, e)
-        ))
-    })?;
-    
-    // Initialize inode table
-    let inode_table_start = block_size * (1 + bitmap_blocks);
-    file.seek(SeekFrom::Start(inode_table_start))?;
-    
-    // Create root inode (inode 2)
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    
-    let root_inode = Inode {
-        mode: 0o40755, // Directory with 755 permissions
-        uid: 0,        // root
-        gid: 0,        // root
-        size: block_size, // Minimum size for a directory
-        atime: now,
-        mtime: now,
-        ctime: now,
-        links: 2,      // . and ..
-        blocks: 1,      // 1 block allocated
-        flags: 0,
-        osd1: [0; 4],
-        block: [0; 15], // Will be filled with block pointers
-        generation: 0,
-        file_acl: 0,
-        dir_acl: 0,
-        faddr: 0,
-        osd2: [0; 12],
-    };
-    
-    // Write root inode (inode 2)
-    let mut inode_buf = vec![0u8; 128]; // 128 bytes per inode
-    root_inode.write_to(&mut &mut inode_buf[..]).map_err(|e| {
-        FormatError::Io(io::Error::new(
-            e.kind(),
-            format!("Failed to serialize root inode: {}", e)
-        ))
-    })?;
-    
-    file.write_all(&inode_buf).map_err(|e| {
-        FormatError::Io(io::Error::new(
-            e.kind(),
-            format!("Failed to write root inode at position {}: {}", 
-                   inode_table_start, e)
-        ))
-    })?;
-    
-    // Initialize root directory
-    let root_dir_block = inode_table_start + inode_table_blocks * block_size;
-    file.seek(SeekFrom::Start(root_dir_block)).map_err(|e| {
-        FormatError::Io(io::Error::new(
-            e.kind(),
-            format!("Failed to seek to root directory block at position {}: {}", 
-                   root_dir_block, e)
-        ))
-    })?;
-    
-    // Write . and .. directory entries
-    let dot = DirEntry::new(2, ".");
-    let dotdot = DirEntry::new(2, "..");
-    
-    let mut dir_block = vec![0u8; block_size as usize];
-    let mut cursor = std::io::Cursor::new(&mut dir_block[..]);
-    
-    // Write . entry
-    dot.write_to(&mut cursor).map_err(|e| {
-        FormatError::Io(io::Error::new(
-            e.kind(),
-            format!("Failed to write '.' directory entry: {}", e)
-        ))
-    })?;
-    
-    // Write .. entry
-    dotdot.write_to(&mut cursor).map_err(|e| {
-        FormatError::Io(io::Error::new(
-            e.kind(),
-            format!("Failed to write '..' directory entry: {}", e)
-        ))
-    })?;
-    
-    // Write directory block to disk
-    file.write_all(&dir_block).map_err(|e| {
-        FormatError::Io(io::Error::new(
-            e.kind(),
-            format!("Failed to write root directory block at position {}: {}", 
-                   root_dir_block, e)
-        ))
-    })?;
-    
-    // Update superblock with used blocks
-    superblock.free_blocks = superblock.block_count - used_blocks - inode_table_blocks - 1; // -1 for root dir block
-    superblock.free_inodes = superblock.inode_count - 1; // -1 for root inode
-    
-    // Write updated superblock
-    file.seek(SeekFrom::Start(0)).map_err(|e| {
-        FormatError::Io(io::Error::new(
-            e.kind(),
-            format!("Failed to seek to superblock at position 0: {}", e)
-        ))
-    })?;
-    
-    superblock.write_to(&mut file).map_err(|e| {
-        FormatError::Io(io::Error::new(
-            e.kind(),
-            format!("Failed to write updated superblock: {}", e)
-        ))
-    })?;
-    
-    // Flush all changes to disk
-    file.sync_all().map_err(|e| {
-        FormatError::Io(io::Error::new(
-            e.kind(),
-            format!("Failed to sync filesystem changes to disk: {}", e)
-        ))
-    })?;
-    
+    log::info!("Successfully formatted device with {}GB filesystem", size_gb);
     Ok(())
 }
 
