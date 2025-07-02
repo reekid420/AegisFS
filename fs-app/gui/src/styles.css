@@ -151,10 +151,18 @@ h3 { font-size: 1.125rem; }
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--background);
-  color: var(--text);
+  color: var(--text) !important;
   font-size: var(--font-size-small);
+  font-weight: 500;
   min-width: 200px;
   cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.instance-selector select option {
+  background: var(--background);
+  color: var(--text) !important;
 }
 
 .instance-selector select:focus {
@@ -453,6 +461,14 @@ canvas {
   grid-template-columns: 320px 1fr;
   gap: var(--space-large);
   height: calc(100vh - 200px);
+  min-height: 400px;
+}
+
+@media (max-width: 768px) {
+  .master-detail-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
 }
 
 .snapshot-list {
@@ -463,12 +479,29 @@ canvas {
   overflow-y: auto;
 }
 
+.snapshot-list h3 {
+  margin-bottom: var(--space-medium);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-small);
+}
+
+.snapshot-list .btn {
+  width: 100%;
+  margin-bottom: var(--space-medium);
+}
+
 .snapshot-details {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: var(--space-medium);
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--text-secondary);
 }
 
 /* === Log Viewer === */
@@ -606,5 +639,18 @@ canvas {
   
   .status-btn:hover {
     background: rgba(255, 255, 255, 0.05);
+  }
+  
+  .instance-selector select {
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--surface) !important;
+    color: var(--text) !important;
+    border-color: var(--border);
+  }
+  
+  .instance-selector select option {
+    background: var(--surface) !important;
+    color: var(--text) !important;
   }
 } 

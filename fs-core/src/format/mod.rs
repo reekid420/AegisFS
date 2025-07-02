@@ -106,6 +106,72 @@ impl DirEntry {
 
         Ok(())
     }
+
+    /// Read directory entry from reader
+    pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
+        let inode = reader.read_u64::<LittleEndian>()?;
+        let rec_len = reader.read_u16::<LittleEndian>()?;
+        let name_len = reader.read_u8()?;
+        let file_type = reader.read_u8()?;
+
+        // Validate directory entry to prevent capacity overflow
+        const MAX_NAME_LEN: u8 = 255;
+        const MIN_REC_LEN: u16 = 12; // minimum: 8 bytes header + 1 name + 1 null + 2 padding
+        const MAX_REC_LEN: u16 = 4096; // Should fit within a block
+        
+        if name_len > MAX_NAME_LEN {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Directory entry name too long: {} > {}", name_len, MAX_NAME_LEN)
+            ));
+        }
+        
+        if rec_len < MIN_REC_LEN || rec_len > MAX_REC_LEN {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Directory entry record length invalid: {}", rec_len)
+            ));
+        }
+        
+        let expected_min_len = 8 + name_len as u16 + 1; // header + name + null terminator
+        if rec_len < expected_min_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Directory entry record length too small: {} < {}", rec_len, expected_min_len)
+            ));
+        }
+
+        // Read the name
+        let mut name_bytes = vec![0u8; name_len as usize];
+        reader.read_exact(&mut name_bytes)?;
+        let name = String::from_utf8_lossy(&name_bytes).to_string();
+
+        // Read null terminator
+        let mut null_byte = [0u8; 1];
+        reader.read_exact(&mut null_byte)?;
+
+        // Read padding
+        let pad_len = rec_len as usize - 8 - name_len as usize - 1;
+        if pad_len > 0 {
+            // Sanity check padding length to prevent excessive allocation
+            if pad_len > 4096 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Directory entry padding too large: {}", pad_len)
+                ));
+            }
+            let mut padding = vec![0u8; pad_len];
+            reader.read_exact(&mut padding)?;
+        }
+
+        Ok(Self {
+            inode,
+            rec_len,
+            name_len,
+            file_type,
+            name,
+        })
+    }
 }
 
 impl Inode {

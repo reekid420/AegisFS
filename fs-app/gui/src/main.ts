@@ -174,6 +174,13 @@ async function initializeCharts() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        animation: {
+          duration: 400,
+          easing: 'easeInOutQuart'
+        },
+        interaction: {
+          intersect: false
+        },
         plugins: {
           legend: {
             display: true,
@@ -186,9 +193,13 @@ async function initializeCharts() {
           },
           y: {
             beginAtZero: true,
+            suggestedMax: 300,
             title: {
               display: true,
               text: 'MB/s'
+            },
+            grid: {
+              color: 'rgba(255, 255, 255, 0.1)'
             }
           }
         }
@@ -318,12 +329,13 @@ async function loadFilesystemStatus() {
 
 async function updateStats() {
   if (!isTauri()) {
-    // Use mock data for web development
+    // Use mock data for web development with more dynamic variations
+    const time = Date.now() / 1000;
     const mockStats = {
-      read_rate: Math.random() * 200,
-      write_rate: Math.random() * 150,
-      iops: Math.floor(Math.random() * 5000),
-      cache_hit_ratio: 0.85 + Math.random() * 0.1
+      read_rate: 50 + 100 * Math.sin(time / 10) + 50 * Math.random(),
+      write_rate: 30 + 80 * Math.cos(time / 8) + 40 * Math.random(),
+      iops: Math.floor(1000 + 3000 * Math.sin(time / 15) + 1000 * Math.random()),
+      cache_hit_ratio: 0.85 + 0.1 * Math.sin(time / 20) + 0.05 * Math.random()
     };
     updateIoStats(mockStats);
     return;
@@ -418,22 +430,34 @@ async function loadTabData(tab: string | null) {
 async function loadSnapshots() {
   if (!isTauri()) {
     // Mock snapshots for web development
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    
     const mockSnapshots: SnapshotInfo[] = [
       {
-        id: 'snapshot_20241230_1530',
+        id: 'snapshot_' + now.getTime(),
         name: 'Daily backup',
-        created_at: '2024-12-30T15:30:00Z',
+        created_at: now.toISOString(),
         size: 2100000000,
         state: 'ready',
         files_changed: 127
       },
       {
-        id: 'snapshot_20241229_1530',
+        id: 'snapshot_' + yesterday.getTime(),
         name: 'Pre-update backup',
-        created_at: '2024-12-29T15:30:00Z',
+        created_at: yesterday.toISOString(),
         size: 1950000000,
         state: 'ready',
         files_changed: 89
+      },
+      {
+        id: 'snapshot_' + lastWeek.getTime(),
+        name: 'Weekly backup',
+        created_at: lastWeek.toISOString(),
+        size: 1850000000,
+        state: 'ready',
+        files_changed: 245
       }
     ];
     displaySnapshots(mockSnapshots);
@@ -495,7 +519,7 @@ function updateIoStats(stats: IoStats) {
       ioChart.data.datasets[1].data.shift();
     }
 
-    ioChart.update('none');
+    ioChart.update('active');
   }
 }
 
@@ -505,9 +529,18 @@ function displaySnapshots(snapshots: SnapshotInfo[]) {
 
   // Group snapshots by date
   const grouped = snapshots.reduce((acc, snapshot) => {
-    const date = new Date(snapshot.created_at).toDateString();
-    if (!acc[date]) acc[date] = [];
-    acc[date].push(snapshot);
+    try {
+      const date = new Date(snapshot.created_at);
+      if (isNaN(date.getTime())) {
+        console.warn('Invalid date for snapshot:', snapshot.created_at);
+        return acc;
+      }
+      const dateStr = date.toDateString();
+      if (!acc[dateStr]) acc[dateStr] = [];
+      acc[dateStr].push(snapshot);
+    } catch (error) {
+      console.error('Error parsing date:', snapshot.created_at, error);
+    }
     return acc;
   }, {} as Record<string, SnapshotInfo[]>);
 
@@ -518,9 +551,11 @@ function displaySnapshots(snapshots: SnapshotInfo[]) {
       <h4>${formatDateGroup(date)}</h4>`;
     
     for (const snap of snaps) {
+      const snapDate = new Date(snap.created_at);
+      const timeStr = isNaN(snapDate.getTime()) ? 'Invalid Date' : snapDate.toLocaleTimeString();
       html += `
         <div class="snapshot-item" data-id="${snap.id}">
-          <span class="snapshot-time">${new Date(snap.created_at).toLocaleTimeString()}</span>
+          <span class="snapshot-time">${timeStr}</span>
           <span class="snapshot-name">${snap.name}</span>
           <span class="snapshot-size">${formatBytes(snap.size)}</span>
         </div>`;

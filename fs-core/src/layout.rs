@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use futures::TryFutureExt;
 use parking_lot::RwLock;
-use std::io::{self, Cursor, Write};
+use std::io::{self, Cursor, Write, Read};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -26,6 +26,13 @@ impl<T> IntoFsError<T> for Result<T, BlockDeviceError> {
 const AEGISFS_MAGIC: &[u8; 8] = b"AEGISFS\x00";
 /// Current filesystem version
 const FS_VERSION: u32 = 1;
+
+/// File block layout constants
+const DIRECT_BLOCKS: usize = 12;           // blocks[0..11] are direct blocks (48KB)
+const SINGLE_INDIRECT_BLOCK: usize = 12;  // blocks[12] is single indirect block
+const DOUBLE_INDIRECT_BLOCK: usize = 13;  // blocks[13] is double indirect block (unused for now)
+const TRIPLE_INDIRECT_BLOCK: usize = 14;  // blocks[14] is triple indirect block (unused for now)
+const POINTERS_PER_BLOCK: usize = BLOCK_SIZE / 8; // 512 pointers per 4KB block
 
 /// Block numbers for important filesystem structures
 #[derive(Debug, Clone, Copy)]
@@ -141,6 +148,9 @@ pub trait DiskFsTrait: Send + Sync {
 
     /// Allocate a new data block
     async fn allocate_data_block(&mut self) -> Result<u64, FsError>;
+
+    /// Read directory entries from a directory inode
+    async fn read_directory_entries(&self, inode: &DiskInode) -> Result<Vec<crate::format::DirEntry>, FsError>;
 }
 
 /// On-disk filesystem implementation
@@ -164,6 +174,125 @@ impl DiskFs {
             cache,
             layout,
             superblock,
+        }
+    }
+
+    /// Get a reference to the superblock
+    pub fn superblock(&self) -> &Superblock {
+        &self.superblock
+    }
+
+    /// Read a bitmap block from disk
+    pub async fn read_bitmap_block(&self, block_num: u64) -> Result<Vec<u8>, FsError> {
+        let mut block_data = vec![0u8; BLOCK_SIZE];
+        self.cache.read_block(block_num, &mut block_data).await.map_err(FsError::Io)?;
+        Ok(block_data)
+    }
+    
+    /// Write a bitmap block to disk
+    pub async fn write_bitmap_block(&self, block_num: u64, data: &[u8]) -> Result<(), FsError> {
+        self.device.write_block(block_num, data).await.into_fs_error()
+    }
+
+    /// Read a block pointer from an indirect block
+    async fn read_indirect_block_pointer(&self, indirect_block: u64, pointer_index: usize) -> Result<u64, FsError> {
+        if pointer_index >= POINTERS_PER_BLOCK {
+            return Err(FsError::InvalidArgument(format!("Pointer index {} out of range", pointer_index)));
+        }
+
+        // Read the indirect block
+        let mut block_data = vec![0u8; BLOCK_SIZE];
+        self.cache
+            .read_block(self.layout.data_block(indirect_block), &mut block_data)
+            .await
+            .map_err(FsError::Io)?;
+
+        // Extract the pointer at the given index
+        let mut cursor = Cursor::new(&block_data[pointer_index * 8..(pointer_index + 1) * 8]);
+        let pointer = cursor.read_u64::<LittleEndian>().map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
+        Ok(pointer)
+    }
+
+    /// Write a block pointer to an indirect block
+    async fn write_indirect_block_pointer(&mut self, indirect_block: u64, pointer_index: usize, block_num: u64) -> Result<(), FsError> {
+        if pointer_index >= POINTERS_PER_BLOCK {
+            return Err(FsError::InvalidArgument(format!("Pointer index {} out of range", pointer_index)));
+        }
+
+        // Read the existing indirect block
+        let mut block_data = vec![0u8; BLOCK_SIZE];
+        self.device
+            .read_block(self.layout.data_block(indirect_block), &mut block_data)
+            .await
+            .into_fs_error()?;
+
+        // Update the pointer at the given index
+        let mut cursor = Cursor::new(&mut block_data[pointer_index * 8..(pointer_index + 1) * 8]);
+        cursor.write_u64::<LittleEndian>(block_num).map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
+
+        // Write the block back
+        self.device
+            .write_block(self.layout.data_block(indirect_block), &block_data)
+            .await
+            .into_fs_error()?;
+
+        Ok(())
+    }
+
+    /// Get the block number for a file's logical block index
+    async fn get_file_block(&self, inode: &DiskInode, block_idx: u64) -> Result<u64, FsError> {
+        if block_idx < DIRECT_BLOCKS as u64 {
+            // Direct block
+            Ok(inode.block[block_idx as usize])
+        } else if block_idx < DIRECT_BLOCKS as u64 + POINTERS_PER_BLOCK as u64 {
+            // Single indirect block
+            let indirect_block = inode.block[SINGLE_INDIRECT_BLOCK];
+            if indirect_block == 0 {
+                return Ok(0); // No indirect block allocated
+            }
+            
+            let pointer_index = block_idx - DIRECT_BLOCKS as u64;
+            self.read_indirect_block_pointer(indirect_block, pointer_index as usize).await
+        } else {
+            // File too large for current implementation (no double/triple indirect support)
+            Err(FsError::InvalidArgument(format!(
+                "File too large. Max supported size: ~{} MB",
+                (DIRECT_BLOCKS * BLOCK_SIZE + POINTERS_PER_BLOCK * BLOCK_SIZE) / (1024 * 1024)
+            )))
+        }
+    }
+
+    /// Set the block number for a file's logical block index
+    async fn set_file_block(&mut self, inode: &mut DiskInode, block_idx: u64, block_num: u64) -> Result<(), FsError> {
+        if block_idx < DIRECT_BLOCKS as u64 {
+            // Direct block
+            inode.block[block_idx as usize] = block_num;
+            Ok(())
+        } else if block_idx < DIRECT_BLOCKS as u64 + POINTERS_PER_BLOCK as u64 {
+            // Single indirect block
+            let mut indirect_block = inode.block[SINGLE_INDIRECT_BLOCK];
+            
+            // Allocate indirect block if it doesn't exist
+            if indirect_block == 0 {
+                indirect_block = self.allocate_data_block().await?;
+                inode.block[SINGLE_INDIRECT_BLOCK] = indirect_block;
+                
+                // Initialize the indirect block with zeros
+                let zero_block = vec![0u8; BLOCK_SIZE];
+                self.device
+                    .write_block(self.layout.data_block(indirect_block), &zero_block)
+                    .await
+                    .into_fs_error()?;
+            }
+            
+            let pointer_index = block_idx - DIRECT_BLOCKS as u64;
+            self.write_indirect_block_pointer(indirect_block, pointer_index as usize, block_num).await
+        } else {
+            // File too large for current implementation
+            Err(FsError::InvalidArgument(format!(
+                "File too large. Max supported size: ~{} MB", 
+                (DIRECT_BLOCKS * BLOCK_SIZE + POINTERS_PER_BLOCK * BLOCK_SIZE) / (1024 * 1024)
+            )))
         }
     }
 }
@@ -193,6 +322,8 @@ impl DiskFsTrait for DiskFs {
         let block_count = superblock.block_count;
         let inode_count = superblock.inode_count;
         let layout = Layout::new(block_count, inode_count);
+        log::info!("LAYOUT MOUNT: block_count={}, inode_count={}, inode_table_start={}", 
+                   block_count, inode_count, layout.inode_table);
 
         Ok(Self {
             device,
@@ -211,7 +342,7 @@ impl DiskFsTrait for DiskFs {
         // Create superblock
         let block_size = 4096; // 4KB blocks
         let block_count = size / block_size as u64;
-        let inode_count = block_count * 4; // 1 inode per 4 blocks
+        let inode_count = size / (32 * 1024); // 1 inode per 32KB (same calculation as Superblock::new)
 
         // Create a new superblock - convert io::Result to our Result
         let mut superblock =
@@ -219,6 +350,8 @@ impl DiskFsTrait for DiskFs {
 
         // Create layout
         let layout = Layout::new(block_count, inode_count);
+        log::info!("LAYOUT FORMAT: block_count={}, inode_count={}, inode_table_start={}", 
+                   block_count, inode_count, layout.inode_table);
 
         // Write superblock to block 0
         let mut superblock_buf = vec![0u8; block_size as usize];
@@ -237,42 +370,64 @@ impl DiskFsTrait for DiskFs {
             .map_err(|_| FsError::InvalidArgument("System time is before UNIX_EPOCH".to_string()))?
             .as_secs();
 
-        let root_inode = DiskInode {
+        // Create root directory entries first to calculate size
+        let dot = DirEntry::new(1, ".");
+        let dot_dot = DirEntry::new(1, "..");
+        
+        // Calculate directory size
+        let dir_entry_size = dot.rec_len as u64 + dot_dot.rec_len as u64;
+
+        let mut root_inode = DiskInode {
             mode: 0o40755, // Directory with 0755 permissions
             uid: 0,        // root
             gid: 0,        // root
-            size: 0,
+            size: dir_entry_size, // Set proper directory size
             atime: now,
             mtime: now,
             ctime: now,
             links: 2, // '.' and '..' from parent
-            blocks: 0,
+            blocks: 1, // One data block
             flags: 0,
             osd1: [0; 4],
-            block: [0; 15],
+            block: [0; 15], // Will set block[0] = 0 for first data block
             generation: 0,
             file_acl: 0,
             dir_acl: 0,
             faddr: 0,
             osd2: [0; 12],
         };
+        
+        // Point to the first data block (data block 0)
+        root_inode.block[0] = 0;
 
-        // Write root inode
-        let mut inode_buf = vec![0u8; block_size as usize];
+        // Write root inode to the correct offset in the inode table
+        let (inode_block_num, inode_offset) = layout.inode_block(1);
+        log::info!("LAYOUT: Writing root inode 1 to block {} at offset {} (mode=0o{:o})", 
+                   inode_block_num, inode_offset, root_inode.mode);
+        
+        // Read the existing inode table block (or create new one if it doesn't exist)
+        let mut inode_table_block = vec![0u8; block_size as usize];
+        // Note: For a fresh filesystem, this block will be all zeros, which is fine
+        
+        // Create a 128-byte buffer for just the inode
+        let mut inode_data = vec![0u8; 128];
         root_inode
-            .write_to(&mut std::io::Cursor::new(&mut inode_buf))
+            .write_to(&mut std::io::Cursor::new(&mut inode_data))
             .map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
-
-        // Write root inode to inode table
+        
+        // Place the inode at the correct offset within the block
+        let offset = inode_offset as usize;
+        inode_table_block[offset..offset + 128].copy_from_slice(&inode_data);
+        
+        // Write the inode table block
         device
-            .write_block(layout.inode_block(1).0, &inode_buf)
+            .write_block(inode_block_num, &inode_table_block)
             .await
             .map_err(FsError::from)?;
+        
+        log::info!("LAYOUT: Root inode written to disk successfully");
 
-        // Create root directory entries
-        let dot = DirEntry::new(1, ".");
-        let dot_dot = DirEntry::new(1, "..");
-
+        // Create root directory entries (already created above)
         let mut dir_block = vec![0u8; block_size as usize];
         let mut cursor = std::io::Cursor::new(&mut dir_block);
 
@@ -318,6 +473,7 @@ impl DiskFsTrait for DiskFs {
 
         // Get block number and offset for the inode
         let (block_num, offset) = self.layout.inode_block(inode_num);
+        log::info!("LAYOUT: Reading inode {} from block {} at offset {}", inode_num, block_num, offset);
 
         // Read the block containing the inode
         let mut block_data = vec![0u8; BLOCK_SIZE];
@@ -327,24 +483,44 @@ impl DiskFsTrait for DiskFs {
             .map_err(FsError::Io)?;
 
         // Parse the inode from the block at the given offset
-        // We need to implement a basic deserializer for DiskInode
         let mut cursor = Cursor::new(&block_data[offset as usize..(offset as usize + 128)]);
 
-        // For now, return a placeholder inode. In a real implementation, we would deserialize from cursor
-        // This is just a placeholder to get past compilation
+        // Deserialize the inode
+        let mode = cursor.read_u32::<LittleEndian>().map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
+        log::info!("LAYOUT: Read inode {} mode from disk: 0o{:o} (directory bit: {})", 
+                   inode_num, mode, if mode & 0o40000 != 0 { "SET" } else { "NOT SET" });
+        let uid = cursor.read_u32::<LittleEndian>().map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
+        let gid = cursor.read_u32::<LittleEndian>().map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
+        let size = cursor.read_u64::<LittleEndian>().map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
+        let atime = cursor.read_u64::<LittleEndian>().map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
+        let mtime = cursor.read_u64::<LittleEndian>().map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
+        let ctime = cursor.read_u64::<LittleEndian>().map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
+        let links = cursor.read_u16::<LittleEndian>().map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
+        let blocks = cursor.read_u64::<LittleEndian>().map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
+        let flags = cursor.read_u32::<LittleEndian>().map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
+        
+        let mut osd1 = [0u8; 4];
+        cursor.read_exact(&mut osd1).map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
+        
+        // Read block pointers (up to 8 based on our 128-byte format)
+        let mut block = [0u64; 15];
+        for i in 0..8 {
+            block[i] = cursor.read_u64::<LittleEndian>().map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
+        }
+        
         Ok(DiskInode {
-            mode: 0,
-            uid: 0,
-            gid: 0,
-            size: 0,
-            atime: 0,
-            mtime: 0,
-            ctime: 0,
-            links: 0,
-            blocks: 0,
-            flags: 0,
-            osd1: [0; 4],
-            block: [0; 15],
+            mode,
+            uid,
+            gid,
+            size,
+            atime,
+            mtime,
+            ctime,
+            links,
+            blocks,
+            flags,
+            osd1,
+            block,
             generation: 0,
             file_acl: 0,
             dir_acl: 0,
@@ -360,6 +536,8 @@ impl DiskFsTrait for DiskFs {
         }
 
         let (block_num, offset) = self.layout.inode_block(inode_num);
+        log::info!("LAYOUT: Writing inode {} to block {} at offset {} (mode=0o{:o}, size={}, blocks={})", 
+                   inode_num, block_num, offset, inode.mode, inode.size, inode.blocks);
 
         // Read the block containing the inode
         let mut block = vec![0u8; BLOCK_SIZE];
@@ -373,7 +551,7 @@ impl DiskFsTrait for DiskFs {
         let offset = offset as usize; // Safe because offset is derived from BLOCK_SIZE
         let inode_slice = &mut block[offset..offset + INODE_SIZE];
         let mut cursor = Cursor::new(inode_slice);
-        inode.write_to(&mut cursor)?;
+        inode.write_to(&mut cursor).map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
 
         // Write the block back
         self.device
@@ -381,6 +559,96 @@ impl DiskFsTrait for DiskFs {
             .await
             .into_fs_error()?;
 
+        // EXTENDED VERIFICATION LOOP - addresses NVMe write cache persistence bug
+        const MAX_RETRIES: usize = 5;
+        const VERIFICATION_INTERVALS: [u64; 4] = [0, 50, 100, 200]; // Immediate, then delays in ms
+        
+        for retry_attempt in 0..MAX_RETRIES {
+            // Force multiple syncs to ensure data reaches storage
+            self.device.sync().await.into_fs_error()?;
+            self.device.sync().await.into_fs_error()?;
+            
+            let mut all_verifications_passed = true;
+            
+            // Test persistence over multiple time intervals to catch cache flushing bugs
+            for (interval_idx, &delay_ms) in VERIFICATION_INTERVALS.iter().enumerate() {
+                if delay_ms > 0 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+                    // Additional sync after delay to force NVMe cache flush
+                    self.device.sync().await.into_fs_error()?;
+                }
+                
+                // Verify the write persisted at this time interval
+                let mut verify_block = vec![0u8; BLOCK_SIZE];
+                self.device
+                    .read_block(block_num, &mut verify_block)
+                    .await
+                    .into_fs_error()?;
+                
+                let verify_inode_slice = &verify_block[offset as usize..(offset as usize + 128)];
+                let mut verify_cursor = Cursor::new(verify_inode_slice);
+                let verify_mode = verify_cursor.read_u32::<LittleEndian>()
+                    .map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
+                
+                if verify_mode == inode.mode {
+                    log::debug!("LAYOUT: ✅ Verification {}/{} PASSED after {}ms - inode {} (mode=0o{:o})", 
+                              interval_idx + 1, VERIFICATION_INTERVALS.len(), delay_ms, inode_num, verify_mode);
+                } else {
+                    log::warn!("LAYOUT: ❌ Verification {}/{} FAILED after {}ms - inode {} wrote (mode=0o{:o}) but read (mode=0o{:o})", 
+                             interval_idx + 1, VERIFICATION_INTERVALS.len(), delay_ms, inode_num, inode.mode, verify_mode);
+                    all_verifications_passed = false;
+                    break;
+                }
+            }
+            
+            if all_verifications_passed {
+                if retry_attempt == 0 {
+                    log::info!("LAYOUT: ✅ EXTENDED VERIFICATION PASSED - inode {} persisted correctly over all intervals", inode_num);
+                } else {
+                    log::warn!("LAYOUT: ✅ EXTENDED VERIFICATION PASSED - inode {} persisted after {} retry attempts (NVMe persistence bug workaround)", 
+                              inode_num, retry_attempt);
+                }
+                break;
+            }
+            
+            // Verification failed - re-write the inode and try again
+            if retry_attempt < MAX_RETRIES - 1 {
+                log::warn!("LAYOUT: 🔄 NVMe persistence bug detected - re-writing inode {} (attempt {}/{})", 
+                          inode_num, retry_attempt + 1, MAX_RETRIES);
+                
+                // Re-read and re-write the inode block
+                let mut retry_block = vec![0u8; BLOCK_SIZE];
+                self.device
+                    .read_block(block_num, &mut retry_block)
+                    .await
+                    .into_fs_error()?;
+                
+                // Update the inode in the block again
+                const INODE_SIZE: usize = 128;
+                let offset_usize = offset as usize;
+                let inode_slice = &mut retry_block[offset_usize..offset_usize + INODE_SIZE];
+                let mut cursor = Cursor::new(inode_slice);
+                inode.write_to(&mut cursor).map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
+                
+                // Write the block back with aggressive syncing
+                self.device
+                    .write_block(block_num, &retry_block)
+                    .await
+                    .into_fs_error()?;
+            } else {
+                // All retries failed
+                log::error!("LAYOUT: ❌ CRITICAL: Failed to persist inode {} after {} attempts - severe NVMe write cache bug", 
+                           inode_num, MAX_RETRIES);
+                return Err(FsError::Io(BlockDeviceError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other, 
+                    format!("Critical NVMe persistence failure: inode {} could not be persisted after {} attempts", inode_num, MAX_RETRIES)
+                ))));
+            }
+        }
+        
+        log::info!("LAYOUT: Successfully wrote and synced inode {} to disk (mode=0o{:o}, size={}, blocks={})", 
+                  inode_num, inode.mode, inode.size, inode.blocks);
+        
         Ok(())
     }
 
@@ -399,12 +667,12 @@ impl DiskFsTrait for DiskFs {
             let block_idx = current_offset / BLOCK_SIZE as u64;
             let block_offset = current_offset % BLOCK_SIZE as u64;
 
-            // For now, we only support direct blocks (first 12 entries in block array)
-            if block_idx >= 12 {
-                break; // Don't support indirect blocks yet
-            }
+            // Get the block number using our new helper function (supports indirect blocks)
+            let block_num = match self.get_file_block(inode, block_idx).await {
+                Ok(num) => num,
+                Err(_) => break, // File too large or error - stop reading
+            };
 
-            let block_num = inode.block[block_idx as usize];
             if block_num == 0 {
                 // Sparse block, return zeros
                 let to_read = std::cmp::min(remaining, BLOCK_SIZE - block_offset as usize);
@@ -448,21 +716,13 @@ impl DiskFsTrait for DiskFs {
             let block_idx = current_offset / BLOCK_SIZE as u64;
             let block_offset = current_offset % BLOCK_SIZE as u64;
 
-            // For now, we only support direct blocks (first 12 entries in block array)
-            if block_idx >= 12 {
-                return Err(FsError::InvalidArgument(
-                    "File too large for direct blocks".to_string(),
-                ));
-            }
-
-            let mut block_num = inode.block[block_idx as usize] as u64;
+            // Get the current block number (supports indirect blocks)
+            let mut block_num = self.get_file_block(inode, block_idx).await?;
 
             // Allocate a new block if needed
             if block_num == 0 {
-                // TODO: Implement proper block allocation
-                // For now, use a simple allocation strategy
                 block_num = self.allocate_data_block().await?;
-                inode.block[block_idx as usize] = block_num;
+                self.set_file_block(inode, block_idx, block_num).await?;
             }
 
             // Read the existing block
@@ -516,6 +776,56 @@ impl DiskFsTrait for DiskFs {
 
             Ok(block)
         }
+    }
+
+    /// Read directory entries from a directory inode
+    async fn read_directory_entries(&self, inode: &DiskInode) -> Result<Vec<crate::format::DirEntry>, FsError> {
+        if (inode.mode & 0o40000) == 0 {
+            return Err(FsError::NotADirectory);
+        }
+
+        let mut entries = Vec::new();
+        let max_blocks = DIRECT_BLOCKS as u64 + POINTERS_PER_BLOCK as u64; // Support direct + single indirect
+
+        // Read data from the directory's data blocks
+        for block_idx in 0..max_blocks {
+            let block_num = match self.get_file_block(inode, block_idx).await {
+                Ok(num) => num,
+                Err(_) => break, // Error or reached limit
+            };
+
+            if block_num == 0 {
+                continue; // Sparse block, skip
+            }
+
+            // Read the data block
+            let mut block_data = vec![0u8; BLOCK_SIZE];
+            self.cache
+                .read_block(self.layout.data_block(block_num), &mut block_data)
+                .await
+                .map_err(FsError::Io)?;
+
+            // Parse directory entries from the block
+            let mut cursor = std::io::Cursor::new(&block_data);
+            while cursor.position() < block_data.len() as u64 {
+                // Check if we've reached the end (all zeros)
+                let current_pos = cursor.position() as usize;
+                if current_pos >= block_data.len() || block_data[current_pos] == 0 {
+                    break;
+                }
+
+                match crate::format::DirEntry::read_from(&mut cursor) {
+                    Ok(entry) => {
+                        if entry.inode != 0 {
+                            entries.push(entry);
+                        }
+                    }
+                    Err(_) => break, // Parsing failed, stop reading
+                }
+            }
+        }
+
+        Ok(entries)
     }
 }
 

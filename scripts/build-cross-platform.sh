@@ -262,7 +262,7 @@ main() {
             ;;
         "test")
             check_dependencies
-            cd fs-core
+            cd ../fs-core
             print_status "Running core library tests..."
             cargo test --features "encryption,compression"
             cd ../fs-app/cli
@@ -272,7 +272,7 @@ main() {
             print_success "Tests completed successfully!"
             ;;
         "clean")
-            cd fs-core
+            cd ../fs-core
             print_status "Cleaning core library build artifacts..."
             cargo clean
             cd ../fs-app/cli

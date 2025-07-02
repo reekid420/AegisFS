@@ -24,8 +24,9 @@ async fn test_data_persistence() {
         .args(&[
             "run",
             "--bin",
-            "aegisfs-format",
+            "aegisfs",
             "--",
+            "format",
             device_path.to_str().unwrap(),
             "--size",
             "1",
@@ -59,8 +60,9 @@ async fn test_data_persistence() {
         .args(&[
             "run",
             "--bin",
-            "aegisfs-mount",
+            "aegisfs",
             "--",
+            "mount",
             device_path.to_str().unwrap(),
             mount_path.to_str().unwrap(),
         ])
@@ -91,7 +93,11 @@ async fn test_data_persistence() {
         assert_eq!(content, test_data, "File content should match");
     }
 
-    // Step 6: Unmount the filesystem
+    // Step 6: Wait for write-back cache to flush (5 seconds based on WRITE_BACK_INTERVAL)
+    println!("Waiting for write-back cache to flush...");
+    sleep(Duration::from_secs(6)).await;
+
+    // Step 7: Unmount the filesystem
     println!("Unmounting filesystem...");
     Command::new("fusermount")
         .args(&["-u", mount_path.to_str().unwrap()])
@@ -101,7 +107,7 @@ async fn test_data_persistence() {
     // Wait for unmount to complete
     sleep(Duration::from_secs(1)).await;
 
-    // Step 7: THE CRITICAL TEST - Check the raw device for our data
+    // Step 8: THE CRITICAL TEST - Check the raw device for our data
     println!("Checking raw device for persisted data...");
 
     // Read the entire device to see if our data was written
@@ -135,14 +141,15 @@ async fn test_data_persistence() {
         panic!("Data persistence test failed - FUSE filesystem is not writing to disk!");
     }
 
-    // Step 8: Try to remount and verify data is still there
+    // Step 9: Try to remount and verify data is still there
     println!("Remounting to verify persistence...");
     let _mount_child2 = Command::new("cargo")
         .args(&[
             "run",
             "--bin",
-            "aegisfs-mount",
+            "aegisfs",
             "--",
+            "mount",
             device_path.to_str().unwrap(),
             mount_path.to_str().unwrap(),
         ])

@@ -14,10 +14,10 @@
     "windows": [
       {
         "title": "AegisFS Management",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 900,
-        "minHeight": 600,
+        "width": 800,
+        "height": 600,
+        "minWidth": 640,
+        "minHeight": 480,
         "center": true,
         "resizable": true,
         "fullscreen": false,
@@ -32,7 +32,8 @@
         "titleBarStyle": "Visible",
         "theme": null,
         "userAgent": null,
-        "devtools": true
+        "devtools": true,
+        "additionalBrowserArgs": "--disable-gpu --disable-gpu-sandbox --disable-gpu-compositing --disable-software-rasterizer --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-features=Vulkan,VizDisplayCompositor --disable-accelerated-2d-canvas --disable-accelerated-video-decode --use-gl=swiftshader-webgl --use-angle=swiftshader"
       }
     ],
     "security": {
