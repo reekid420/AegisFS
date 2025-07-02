@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/src/assets/logo.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AegisFS Management</title>
+  </head>
+  <body>
+    <!-- Emergency fallback content -->
+    <div id="loading" style="padding: 20px; text-align: center; font-family: system-ui;">
+      <h1>Loading AegisFS Management...</h1>
+      <p>If this message persists, check the developer console.</p>
+    </div>
+    
+    <div id="app">
+      <!-- Main Window Container -->
+      <div class="window">
+        <!-- Title Bar with Instance Selector -->
+        <header class="title-bar">
+          <div class="title-bar-left">
+            <span class="app-icon">≡</span>
+            <span class="app-title">AegisFS Management</span>
+          </div>
+          <div class="title-bar-center">
+            <div class="instance-selector">
+              <label>Instance:</label>
+              <select id="instance-dropdown">
+                <option value="/dev/nvme0n1p6">/dev/nvme0n1p6</option>
+              </select>
+              <button class="btn-icon" id="add-instance" title="Add new instance">+</button>
+            </div>
+          </div>
+          <div class="title-bar-right">
+            <!-- Window controls will be handled by Tauri -->
+          </div>
+        </header>
+
+        <!-- Tab Navigation -->
+        <nav class="tab-nav">
+          <button class="tab-button active" data-tab="dashboard">Dashboard</button>
+          <button class="tab-button" data-tab="snapshots">Snapshots</button>
+          <button class="tab-button" data-tab="tiering">Tiering</button>
+          <button class="tab-button" data-tab="backup">Backup</button>
+          <button class="tab-button" data-tab="logs">Logs</button>
+          <button class="tab-button" data-tab="settings">Settings</button>
+          <button class="tab-button" data-tab="help">Help</button>
+        </nav>
+
+        <!-- Main Content Area -->
+        <main class="content">
+          <!-- Dashboard Tab -->
+          <div class="tab-content active" id="dashboard-tab">
+            <div class="dashboard-grid">
+              <!-- Filesystem Overview Card -->
+              <div class="card" id="fs-overview">
+                <h3>Filesystem Overview</h3>
+                <div class="card-content">
+                  <div class="stat-row">
+                    <span>Device:</span>
+                    <span id="device-path">/dev/nvme0n1p6</span>
+                  </div>
+                  <div class="stat-row">
+                    <span>Mount Point:</span>
+                    <span id="mount-point">/mnt/aegisfs</span>
+                  </div>
+                  <div class="stat-row">
+                    <span>Status:</span>
+                    <span class="status-badge online">Online</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- I/O Statistics Card -->
+              <div class="card" id="io-stats">
+                <h3>I/O Statistics</h3>
+                <div class="card-content">
+                  <div class="stat-row">
+                    <span>Read:</span>
+                    <span id="read-rate">0 MB/s</span>
+                  </div>
+                  <div class="stat-row">
+                    <span>Write:</span>
+                    <span id="write-rate">0 MB/s</span>
+                  </div>
+                  <div class="stat-row">
+                    <span>IOPS:</span>
+                    <span id="iops">0</span>
+                  </div>
+                  <canvas id="io-chart"></canvas>
+                </div>
+              </div>
+
+              <!-- Health Status Card -->
+              <div class="card" id="health-status">
+                <h3>Health Status</h3>
+                <div class="card-content">
+                  <div class="health-indicator good">
+                    <span class="icon">✓</span>
+                    <span>Healthy</span>
+                  </div>
+                  <div class="stat-row">
+                    <span>Last Scrub:</span>
+                    <span id="last-scrub">Never</span>
+                  </div>
+                  <div class="stat-row">
+                    <span>Errors:</span>
+                    <span id="error-count">0</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Recent Activity Card -->
+              <div class="card" id="recent-activity">
+                <h3>Recent Activity</h3>
+                <div class="card-content">
+                  <ul class="activity-list" id="activity-list">
+                    <li>No recent activity</li>
+                  </ul>
+                </div>
+              </div>
+
+              <!-- Storage Usage Card -->
+              <div class="card" id="storage-usage">
+                <h3>Storage Usage</h3>
+                <div class="card-content">
+                  <canvas id="storage-chart"></canvas>
+                  <div class="storage-stats">
+                    <div class="stat-row">
+                      <span>Used:</span>
+                      <span id="used-space">0 GB</span>
+                    </div>
+                    <div class="stat-row">
+                      <span>Free:</span>
+                      <span id="free-space">0 GB</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Quick Actions Card -->
+              <div class="card" id="quick-actions">
+                <h3>Quick Actions</h3>
+                <div class="card-content">
+                  <button class="btn btn-primary" id="create-snapshot">Create Snapshot</button>
+                  <button class="btn btn-secondary" id="run-scrub">Run Scrub</button>
+                  <button class="btn btn-secondary" id="toggle-mount">Unmount</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Other tabs (hidden by default) -->
+          <div class="tab-content" id="snapshots-tab">
+            <div class="master-detail-layout">
+              <div class="snapshot-list">
+                <h3>Snapshots</h3>
+                <div id="snapshot-timeline">
+                  <!-- Snapshots will be loaded here -->
+                </div>
+                <button class="btn btn-primary" id="new-snapshot">Create New</button>
+              </div>
+              <div class="snapshot-details">
+                <h3>Snapshot Details</h3>
+                <div id="snapshot-info">
+                  <p>Select a snapshot to view details</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tab-content" id="tiering-tab">
+            <h2>Storage Tiering</h2>
+            <p>Tiering configuration will be implemented here</p>
+          </div>
+
+          <div class="tab-content" id="backup-tab">
+            <h2>Backup Management</h2>
+            <p>Backup jobs and scheduling will be implemented here</p>
+          </div>
+
+          <div class="tab-content" id="logs-tab">
+            <h2>System Logs</h2>
+            <div class="log-viewer">
+              <div class="log-filters">
+                <label>
+                  <input type="checkbox" checked> System
+                </label>
+                <label>
+                  <input type="checkbox" checked> I/O
+                </label>
+                <label>
+                  <input type="checkbox" checked> Snapshots
+                </label>
+                <label>
+                  <input type="checkbox" checked> Errors
+                </label>
+              </div>
+              <div class="log-content" id="log-content">
+                <!-- Logs will be displayed here -->
+              </div>
+            </div>
+          </div>
+
+          <div class="tab-content" id="settings-tab">
+            <h2>Settings</h2>
+            <p>Configuration options will be implemented here</p>
+          </div>
+
+          <div class="tab-content" id="help-tab">
+            <h2>Help & Documentation</h2>
+            <p>Help content will be implemented here</p>
+          </div>
+        </main>
+
+        <!-- Status Bar -->
+        <footer class="status-bar">
+          <div class="status-left">
+            <span id="connection-status">Status: Connected to /dev/nvme0n1p6</span>
+          </div>
+          <div class="status-right">
+            <button class="status-btn" id="show-logs">Logs</button>
+            <button class="status-btn" id="show-about">About</button>
+          </div>
+        </footer>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

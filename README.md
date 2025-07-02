@@ -98,12 +98,8 @@ See [dev-roadmap.md](dev-roadmap.md) for detailed progress and development timel
 git clone https://github.com/your-username/aegisfs.git
 cd aegisfs
 
-# Use the cross-platform build script (recommended)
+# Use the cross-platform build script (Required)
 ./scripts/build-cross-platform.sh
-
-# Or build manually
-cd fs-core && cargo build --release
-cd ../fs-app/cli && cargo build --release
 ```
 
 ### Using AegisFS

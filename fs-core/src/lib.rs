@@ -8,6 +8,8 @@
 #![warn(rustdoc::missing_crate_level_docs)]
 #![warn(rust_2018_idioms)]
 #![allow(dead_code)] // TODO: Remove in production
+// Silence cross-platform compilation warnings for optional features
+#![cfg_attr(not(feature = "fuse"), allow(unused_imports, unresolved_import, unreachable_code))]
 
 // Core modules
 pub mod blockdev;
@@ -403,6 +405,7 @@ impl AegisFS {
 }
 
 #[cfg(feature = "fuse")]
+#[allow(unresolved_import, unused_imports)]
 impl Filesystem for AegisFS {
     fn lookup(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let name_str = match name.to_str() {

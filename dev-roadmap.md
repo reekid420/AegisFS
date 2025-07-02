@@ -42,9 +42,6 @@ aegisfs/                     ← Project root
 │   ├── architecture.md
 │   ├── module_specs.md
 │   └── api_reference.md
-├── ci/                         ← CI/CD pipelines & tests
-│   ├── docker/                 ← Build containers
-│   └── workflows/              ← GitHub Actions, Azure Pipelines
 ├── scripts/                    ← Utility scripts (format, lint, coverage)
 ├── .github/                    ← Issue/PR templates, community files
 │   └── FUNDING.yml
@@ -215,7 +212,14 @@ aegisfs/                     ← Project root
 
 ## Phase 2: Management App & UI/UX (4–6 Weeks)
 
-### 1. Native GUI Framework Selection  
+### 1. Native GUI Framework Selection - **Tauri** ✅ 
+  **Chosen Framework: Rust + Tauri**
+  - **Languages**: Rust (backend) + HTML/CSS/JS (frontend)
+  - **Platforms**: Linux, Windows, macOS
+  - **Single Binary**: ✅ Yes, very small binaries (~10-40MB)
+  - **Embedded Assets**: ✅ All web assets embedded
+  - **Why**: Excellent for system management apps, great performance, small binaries, active development
+  
   – Prototype basic window, tabs for Snapshots, Tiering, Settings  
 
 ### 2. Integrate Core APIs  
