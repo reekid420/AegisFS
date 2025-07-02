@@ -292,6 +292,7 @@ jobs:
       uses: docker/build-push-action@v5
       with:
         context: .
+        target: ci
         push: false
         tags: aegisfs:test
         cache-from: type=gha
@@ -301,7 +302,11 @@ jobs:
       run: |
         docker run --rm --privileged \
           -v /dev/fuse:/dev/fuse \
-          aegisfs:test bash -c "cd fs-core && cargo test --lib"
+          aegisfs:test bash -c "\
+            set -e; \
+            cd fs-core; \
+            cargo test --all-features -- --test-threads=1 \
+        "
 
   # Job 8: Memory safety and leak detection
   memory-safety:

@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y \
     libc6-dev \
     curl \
     git \
+    lsof \
+    valgrind \
     sudo \
     && rm -rf /var/lib/apt/lists/*
 
