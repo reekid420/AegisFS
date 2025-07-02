@@ -305,7 +305,7 @@ jobs:
           aegisfs:test bash -c "\
             set -e; \
             cd fs-core; \
-            cargo test --all-features -- --test-threads=1 \
+            cargo test --lib --all-features \
         "
 
   # Job 8: Memory safety and leak detection
