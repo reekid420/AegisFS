@@ -2,198 +2,305 @@
 
 A modern, feature-rich filesystem with advanced capabilities including journaling, snapshots, encryption, and tiered storage.
 
-## Features
+## 🎯 Project Status
 
-### ✅ Implemented
-- **FUSE-based filesystem** - Fully functional userspace filesystem
-- **Device formatting** - Format real block devices and files with AegisFS
-- **File operations** - Create, read, write, delete files with proper metadata
-- **Directory operations** - Create, list, navigate directory structures
-- **Unified CLI** - Professional command-line interface with subcommands
-- **Snapshot framework** - Complete metadata management system with persistence
-- **Block device abstraction** - Support for files and real devices (NVMe, SSD, etc.)
-- **Cross-platform builds** - Unix/Linux and Windows build systems
-- **Dual licensing** - MIT OR Apache-2.0 for maximum compatibility
+**Phase 1: FUSE Implementation** - ✅ **COMPLETE** (December 2024 - January 2025)
 
-### 🚧 In Progress
-- **Data persistence** - Real file data storage (currently using placeholder system)
-- **Snapshot integration** - Connect snapshot system with filesystem operations
+### ✅ Implemented & Tested
+- **✅ FUSE-based filesystem** - Fully functional userspace filesystem with complete file/directory operations
+- **✅ Data persistence** - Real file data storage with write-back cache and robust error handling  
+- **✅ Device formatting** - Format real block devices and files with AegisFS (tested on NVMe partitions)
+- **✅ File operations** - Create, read, write, delete files with proper metadata and persistence
+- **✅ Directory operations** - Create, list, navigate directory structures with full persistence
+- **✅ Unified CLI** - Professional command-line interface with subcommands (72% size reduction from 4 binaries to 1)
+- **✅ Snapshot framework** - Complete metadata management system with JSON persistence
+- **✅ Block device abstraction** - Support for files and real devices (NVMe, SSD, etc.)
+- **✅ Cross-platform builds** - Unix/Linux and Windows build systems
+- **✅ Dual licensing** - MIT OR Apache-2.0 for maximum compatibility
+- **✅ Production-ready structure** - Professional project layout matching enterprise standards
 
-### 📋 Planned
+### 🚧 In Active Development
+- **🚧 GUI Management Interface** - Tauri-based cross-platform GUI (early development)
+- **🚧 Module Integration** - Connect journaling, checksums, and snapshots with live filesystem operations
+- **🚧 Performance Optimization** - Benchmarking and optimization of critical paths
+
+### 📋 Planned Features
 - **Journaling & Ordered Writes** - Ensure data consistency and crash recovery
-- **Block Checksums & Self-heal** - Detect and repair data corruption automatically
+- **Block Checksums & Self-heal** - Detect and repair data corruption automatically  
 - **Encryption** - Optional AES-GCM encryption for data at rest
 - **Compression** - LZ4/ZSTD compression with deduplication
 - **Tiered Storage** - Intelligent data placement across storage tiers
-- **Native GUI** - Cross-platform management interface
 - **Kernel module** - High-performance kernel-space implementation
 
-## Project Status
-
-🎉 **Phase 1: Professional Foundation Complete** - Major milestones achieved!
-
-### ✅ Recently Completed (Dec 2024)
-- **FUSE Implementation SUCCESS** - All core filesystem operations working perfectly
-- **Unified CLI Architecture** - Professional command interface (72% size reduction from 4 binaries to 1)
-- **Perfect Project Structure** - Repository layout exactly matches enterprise standards
-- **Production-Ready Licensing** - MIT OR Apache-2.0 dual license with proper documentation
-- **Cross-Platform Build System** - Updated scripts for unified architecture
-- **Snapshot Framework** - Complete metadata management with JSON persistence
-
-### ✅ Phase 0 & Early Phase 1 Achievements
-- [x] Complete repository setup and professional project structure
-- [x] Fully functional FUSE-based filesystem with all operations
-- [x] Real device formatting (successfully tested on NVMe partitions)
-- [x] File operations (create, read, write, delete) with correct metadata
-- [x] Directory operations (create, list, navigate) working perfectly
-- [x] Unified CLI with format/mount/snapshot/scrub subcommands
-- [x] Comprehensive testing and documentation
-- [x] Cross-platform build and deployment system
-
-### 🚧 Current Focus: Data Persistence Integration
-
-**Phase 1 Completion** (Weeks 5-6):
-- Real file data storage implementation (replacing placeholder system)
-- Snapshot-filesystem integration for live data capture
-- Performance testing and benchmarking
-- Final Phase 1 deliverables
-
-See [dev-roadmap.md](dev-roadmap.md) for detailed progress and development timeline.
-
-## Quick Start
-
-1. **Build AegisFS**:
-   ```bash
-   git clone https://github.com/your-username/aegisfs.git
-   cd aegisfs
-   ./scripts/build-cross-platform.sh
-   ```
-
-2. **Create a test filesystem**:
-   ```bash
-   truncate -s 1G test.img
-   ./fs-app/cli/target/release/aegisfs format test.img --size 1
-   ```
-
-3. **Mount and use**:
-   ```bash
-   mkdir testmnt
-   ./fs-app/cli/target/release/aegisfs mount test.img testmnt
-   # Use the filesystem normally - create files, directories, etc.
-   fusermount -u testmnt  # Unmount when done
-   ```
-
-## Getting Started
+## 🚀 Quick Start
 
 ### Prerequisites
 
-- Rust (latest stable)
-- Cargo
-- FUSE (for development)
-- Docker (for containerized development)
+- **Rust** (latest stable)
+- **FUSE** development headers:
+  ```bash
+  # Ubuntu/Debian
+  sudo apt-get install fuse3 libfuse3-dev pkg-config
+  
+  # macOS  
+  brew install macfuse pkg-config
+  
+  # Fedora/RHEL
+  sudo dnf install fuse3-devel pkg-config
+  ```
 
-### Building from Source
+### Build AegisFS
 
 ```bash
 git clone https://github.com/your-username/aegisfs.git
 cd aegisfs
 
-# Use the cross-platform build script (Required)
+# Build everything (recommended method)
 ./scripts/build-cross-platform.sh
 ```
 
-### Using AegisFS
-
-The unified CLI provides all functionality through subcommands:
+### Create and Use a Filesystem
 
 ```bash
-# Format a device (replace /dev/sdX with your device)
-./fs-app/cli/target/release/aegisfs format /path/to/device --size 3
+# Create a 1GB test filesystem
+truncate -s 1G test.img
+./fs-app/cli/target/release/aegisfs format test.img --size 1
 
-# Format a file (useful for testing)
-truncate -s 3G test.img
-./fs-app/cli/target/release/aegisfs format test.img --size 3
+# Mount and use the filesystem
+mkdir testmnt
+./fs-app/cli/target/release/aegisfs mount test.img testmnt
 
-# Mount the filesystem
-mkdir /mnt/aegisfs
-./fs-app/cli/target/release/aegisfs mount test.img /mnt/aegisfs
+# Use normally - create files, directories, etc.
+echo "Hello AegisFS!" > testmnt/hello.txt
+cat testmnt/hello.txt
+ls -la testmnt/
+
+# Unmount when done
+fusermount -u testmnt
+```
+
+### Format Real Block Devices
+
+```bash
+# ⚠️ WARNING: This will destroy all data on the device!
+# Replace /dev/sdX with your actual device
+sudo ./fs-app/cli/target/release/aegisfs format /dev/sdX --size 100 --force
+
+# Mount the formatted device
+sudo mkdir /mnt/aegisfs
+sudo ./fs-app/cli/target/release/aegisfs mount /dev/sdX /mnt/aegisfs
+```
+
+## 📖 Documentation
+
+### Quick Reference
+- **[Development Guide](docs/development.md)** - Setup, testing, and contribution workflow
+- **[Architecture](docs/architecture.md)** - Technical design and module structure  
+- **[Build Instructions](docs/BUILD.md)** - Detailed build and cross-compilation guide
+
+### Command Reference
+
+#### Core Commands
+```bash
+# Format a device/file
+aegisfs format <device> --size <GB> [--force]
+
+# Mount a filesystem  
+aegisfs mount <device> <mountpoint>
 
 # Create and manage snapshots
-./fs-app/cli/target/release/aegisfs snapshot test.img create backup-1
-./fs-app/cli/target/release/aegisfs snapshot test.img list
+aegisfs snapshot <device> create <name>
+aegisfs snapshot <device> list
+aegisfs snapshot <device> delete <name>
 
 # Check filesystem integrity
-./fs-app/cli/target/release/aegisfs scrub test.img
-
-# When done, unmount with:
-fusermount -u /mnt/aegisfs
+aegisfs scrub <device>
 ```
 
-### CLI Help
-
+#### Getting Help
 ```bash
-# Get help for all commands
-./fs-app/cli/target/release/aegisfs --help
+# General help
+aegisfs --help
 
-# Get help for specific commands
-./fs-app/cli/target/release/aegisfs format --help
-./fs-app/cli/target/release/aegisfs snapshot --help
+# Command-specific help
+aegisfs format --help
+aegisfs mount --help  
+aegisfs snapshot --help
+aegisfs scrub --help
 ```
 
-### Development Commands
-
-```bash
-# Build everything (recommended)
-./scripts/build-cross-platform.sh
-
-# Run all tests
-./scripts/build-cross-platform.sh test
-
-# Clean build artifacts
-./scripts/build-cross-platform.sh clean
-
-# Build individual components
-cd fs-core && cargo test                    # Core library tests
-cd fs-app/cli && cargo build --release      # CLI application
-```
-
-## Development
+## 🏗️ Architecture
 
 ### Project Structure
-
 ```
 aegisfs/
-├── fs-core/                    ← Core filesystem library (Rust)
-│   ├── src/                    ← Core implementation
-│   │   ├── modules/            ← Pluggable components (snapshots, journaling, etc.)
-│   │   └── bindings/           ← C/C++ FFI bindings
-│   ├── include/                ← Public headers
-│   ├── tests/                  ← Unit & integration tests
-│   └── benches/                ← Performance benchmarks
+├── fs-core/                    ← Core filesystem library
+│   ├── src/                    ← FUSE implementation & modules
+│   │   ├── modules/            ← Pluggable components
+│   │   │   ├── journaling/     ← Transaction & crash recovery
+│   │   │   ├── snapshot/       ← Snapshot management
+│   │   │   └── checksums/      ← Data integrity verification
+│   │   ├── blockdev/           ← Block device abstraction
+│   │   ├── cache.rs            ← In-memory caching layer
+│   │   ├── layout.rs           ← On-disk format & layout
+│   │   └── lib.rs              ← Main FUSE filesystem
+│   └── tests/                  ← Unit & integration tests
 ├── fs-app/                     ← Management applications
 │   ├── cli/                    ← Unified command-line interface
-│   ├── gui/                    ← Native GUI (planned)
-│   └── pkg/                    ← Build scripts and installers
-├── fs-kmod/                    ← Linux kernel module (planned)
-├── docs/                       ← Architecture and API documentation
-├── scripts/                    ← Cross-platform build and utility scripts
-├── examples/                   ← Demo scripts and sample configurations
-└── ci/                         ← CI/CD pipelines and test configurations
+│   └── gui/                    ← Tauri-based management GUI
+├── docs/                       ← Documentation
+├── scripts/                    ← Build & utility scripts
+├── .github/workflows/          ← CI/CD automation
+└── Dockerfile                  ← Development & testing containers
 ```
 
 ### Key Features
 
-- **Unified CLI**: Single `aegisfs` binary with intuitive subcommands
-- **Cross-Platform**: Builds on Linux, macOS, and Windows
-- **Professional Architecture**: Clean separation between core library and applications
-- **Enterprise-Ready**: Dual licensing, comprehensive documentation, proper versioning
+#### Modern Architecture
+- **Modular Design** - Pluggable components for different features
+- **FUSE-based** - Userspace implementation for safety and portability
+- **Async I/O** - Tokio-based asynchronous operations for performance
+- **Memory Safety** - Written in Rust with comprehensive error handling
 
-## License
+#### Data Persistence
+- **Write-back Cache** - 5-second flush interval with immediate sync on critical operations
+- **Robust Error Handling** - 3x retry logic with graceful degradation
+- **Inode Management** - Proper allocation tracking with bitmap persistence
+- **Directory Persistence** - Parent-child relationships maintained on disk
 
-This project is licensed under either of
+#### Enterprise Ready
+- **Dual Licensing** - MIT OR Apache-2.0 for maximum compatibility
+- **Cross-platform** - Linux, macOS, Windows support
+- **Professional CLI** - Intuitive subcommand interface
+- **Comprehensive Testing** - Unit, integration, and persistence tests
 
-* Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
-* MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+## 🔧 Development
+
+### Build System
+```bash
+# Build for current platform
+./scripts/build-cross-platform.sh
+
+# Run all tests  
+./scripts/build-cross-platform.sh test
+
+# Cross-compile for different targets
+./scripts/build-cross-platform.sh cross x86_64-pc-windows-msvc
+
+# Clean build artifacts
+./scripts/build-cross-platform.sh clean
+```
+
+### Testing
+```bash
+# Unit tests
+cd fs-core && cargo test --lib
+
+# Integration tests (requires FUSE)
+cd fs-core && cargo test --test persistence_test --test write_operations -- --test-threads=1
+
+# All tests with coverage
+cd fs-core && cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
+```
+
+### Docker Development
+```bash
+# Build development environment
+docker build --target dev -t aegisfs:dev .
+
+# Run interactive development
+docker run -it --privileged -v /dev/fuse:/dev/fuse -v $(pwd):/workspace aegisfs:dev
+
+# Run tests in container
+docker build --target ci -t aegisfs:ci .
+docker run --rm --privileged -v /dev/fuse:/dev/fuse aegisfs:ci
+```
+
+## 🧪 Testing & Verification
+
+### Persistence Verification
+The project includes comprehensive tests to verify data actually persists to disk:
+
+```bash
+# Run the critical persistence test
+cd fs-core && cargo test --test persistence_test -- --test-threads=1
+```
+
+This test:
+1. Formats a filesystem
+2. Mounts it via FUSE
+3. Writes test data
+4. Unmounts the filesystem  
+5. Checks raw device for the written data
+6. Remounts and verifies data persistence
+
+### Real Device Testing
+AegisFS has been successfully tested on real NVMe partitions:
+
+```bash
+# Successfully tested on /dev/nvme0n1p6
+sudo ./fs-app/cli/target/release/aegisfs format /dev/nvme0n1p6 --size 10 --force
+sudo ./fs-app/cli/target/release/aegisfs mount /dev/nvme0n1p6 /mnt/test
+```
+
+## 📊 Performance Characteristics
+
+### Current Implementation
+- **Write-back Cache** - 5-second flush interval balances performance and data safety
+- **Small File Optimization** - Files ≤4KB cached in memory for speed  
+- **Async Operations** - Non-blocking I/O using Tokio thread pool
+- **Error Recovery** - 3x retry logic for resilient operation
+
+### Benchmarking
+```bash
+# Run performance benchmarks
+cd fs-core && cargo criterion
+```
+
+## 🔒 Security & Reliability
+
+### Data Safety
+- **Write-back Cache** - Automatic periodic sync every 5 seconds
+- **Manual Sync** - fsync() support for critical operations
+- **Error Handling** - Comprehensive retry logic and graceful degradation
+- **Crash Recovery** - Journaling framework (integration in progress)
+
+### Security Features
+- **Memory Safety** - Rust's ownership system prevents common vulnerabilities
+- **Input Validation** - All user inputs validated and sanitized
+- **Permission Checks** - POSIX permission enforcement
+- **Audit Trail** - Comprehensive logging of filesystem operations
+
+## 🤝 Contributing
+
+We welcome contributions! Please see our [Development Guide](docs/development.md) for details on:
+
+- Setting up the development environment
+- Running tests and quality checks
+- Submitting pull requests
+- Code style and conventions
+
+### Quick Contribution Workflow
+```bash
+# 1. Fork and clone the repository
+git clone https://github.com/your-username/aegisfs.git
+cd aegisfs
+
+# 2. Create a feature branch
+git checkout -b feature/your-feature
+
+# 3. Make changes and test
+./scripts/build-cross-platform.sh test
+
+# 4. Submit a pull request
+```
+
+## 📄 License
+
+This project is dual licensed under either of:
+
+* **Apache License, Version 2.0** ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+* **MIT License** ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
 at your option.
 
@@ -201,10 +308,20 @@ at your option.
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
 
-## Contributing
+## 🗺️ Roadmap
 
-Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details.
+See [dev-roadmap.md](dev-roadmap.md) for detailed development plans and timeline.
 
-## Roadmap
+### Current Phase: Module Integration (Phase 1.5)
+- Connect journaling system with filesystem operations
+- Integrate checksums with block I/O operations
+- Complete snapshot-filesystem integration
 
-See [dev-roadmap.md](dev-roadmap.md) for detailed development plans.
+### Next Phase: GUI & Advanced Features (Phase 2)
+- Complete Tauri-based management interface
+- Implement encryption and compression modules
+- Add tiered storage capabilities
+
+---
+
+**AegisFS** - Building the future of filesystem technology with safety, performance, and modularity.

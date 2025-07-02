@@ -37,12 +37,17 @@ COPY --chown=developer:developer . .
 
 # Pre-build dependencies for faster CI runs
 RUN cd fs-core && cargo fetch
+RUN cd fs-app/cli && cargo fetch
 
 # Enable FUSE in container
 RUN sudo modprobe fuse || true
 
-# Default command for CI
-CMD ["bash", "-c", "cd fs-core && cargo test --all-features"]
+# Build the project
+RUN cd fs-core && cargo build --all-features
+RUN cd fs-app/cli && cargo build
+
+# Default command for CI - run comprehensive tests
+CMD ["bash", "-c", "./scripts/build-cross-platform.sh test"]
 
 # Stage 3: Development environment with additional tools
 FROM base as dev
@@ -55,13 +60,20 @@ RUN apt-get update && apt-get install -y \
     gdb \
     valgrind \
     strace \
+    htop \
+    vim \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy project files
 COPY --chown=developer:developer . .
 
-# Build the project
+# Pre-fetch dependencies
+RUN cd fs-core && cargo fetch
+RUN cd fs-app/cli && cargo fetch
+
+# Build the project in development mode
 RUN cd fs-core && cargo build --all-features
+RUN cd fs-app/cli && cargo build
 
 # Expose any ports needed for development
 EXPOSE 8080
@@ -74,6 +86,7 @@ FROM debian:bookworm-slim as runtime
 
 RUN apt-get update && apt-get install -y \
     fuse3 \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Create runtime user
@@ -81,10 +94,13 @@ RUN useradd -m -s /bin/bash aegisfs && \
     usermod -a -G fuse aegisfs
 
 # Copy built binaries from development stage
-COPY --from=dev --chown=aegisfs:aegisfs /workspace/fs-core/target/release/aegisfs-* /usr/local/bin/
+COPY --from=dev --chown=aegisfs:aegisfs /workspace/fs-app/cli/target/release/aegisfs /usr/local/bin/aegisfs
+
+# Ensure binary is executable
+RUN chmod +x /usr/local/bin/aegisfs
 
 USER aegisfs
 WORKDIR /home/aegisfs
 
-# Default to the mount command
-CMD ["aegisfs-mount", "--help"]
+# Default to showing help
+CMD ["aegisfs", "--help"]

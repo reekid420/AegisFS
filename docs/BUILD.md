@@ -1,313 +1,580 @@
-# AegisFS Cross-Platform Build Guide
+# AegisFS Build Guide
 
-This guide explains how to compile AegisFS for different operating systems and platforms.
+This guide covers building AegisFS from source, cross-compilation, and advanced build configurations.
 
-## Quick Start
+## 🚀 Quick Build
 
-### Automatic Build (Recommended)
-
-**Linux/macOS/Unix:**
+### Standard Build
 ```bash
-# Make the script executable
-chmod +x build-cross-platform.sh
+# Clone repository
+git clone https://github.com/your-username/aegisfs.git
+cd aegisfs
 
-# Build for your current platform
-./build-cross-platform.sh
+# Build everything (recommended)
+./scripts/build-cross-platform.sh
 
-# Or cross-compile for Windows
-./build-cross-platform.sh cross x86_64-pc-windows-msvc
+# Binaries will be available at:
+# fs-app/cli/target/release/aegisfs
 ```
 
-**Windows:**
-```batch
-# Build for Windows
-build-cross-platform.bat
-
-# Or cross-compile for Linux
-build-cross-platform.bat cross x86_64-unknown-linux-gnu
+### Test Build
+```bash
+# Build and run all tests
+./scripts/build-cross-platform.sh test
 ```
 
-## Platform Support
+## 📋 Prerequisites
 
-| Platform | Status | Features Available |
-|----------|--------|-------------------|
-| Linux | ✅ Full Support | FUSE mounting, encryption, compression, all tools |
-| macOS | ✅ Full Support | FUSE mounting, encryption, compression, all tools |
-| Windows | 🟡 Partial Support | File operations, encryption, compression (no mounting yet) |
-| FreeBSD | ✅ Full Support | FUSE mounting, encryption, compression, all tools |
+### System Requirements
 
-## Manual Build Instructions
+- **Rust** 1.70+ (latest stable recommended)
+- **Cargo** (included with Rust)
+- **Git**
+- **Platform-specific FUSE libraries** (see below)
 
-### Prerequisites
+### Platform Dependencies
 
-#### Common Requirements
-- [Rust](https://rustup.rs/) (latest stable version)
-- Git
-
-#### Platform-Specific Requirements
-
-**Linux (Ubuntu/Debian):**
+#### Linux (Ubuntu/Debian)
 ```bash
 sudo apt-get update
-sudo apt-get install libfuse3-dev pkg-config build-essential
+sudo apt-get install -y \
+    fuse3 libfuse3-dev \
+    pkg-config build-essential \
+    libc6-dev curl git
 ```
 
-**Linux (RHEL/Fedora):**
+#### Linux (Fedora/RHEL/CentOS)
 ```bash
-sudo yum install fuse3-devel pkgconfig gcc
+sudo dnf install -y \
+    fuse3-devel pkg-config \
+    gcc gcc-c++ make \
+    glibc-devel curl git
 ```
 
-**macOS:**
+#### macOS
 ```bash
-# Install Homebrew if not already installed
+# Install Homebrew if needed
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
 # Install dependencies
 brew install macfuse pkg-config
 ```
 
-**Windows:**
-```batch
-# Install Visual Studio Build Tools
-# Download from: https://visualstudio.microsoft.com/visual-cpp-build-tools/
-
-# Optional: Install WinFsp for future filesystem mounting support
-# Download from: https://winfsp.dev/
+#### Windows (WSL2)
+```bash
+# In WSL2 Ubuntu/Debian environment
+sudo apt-get update
+sudo apt-get install -y \
+    fuse3 libfuse3-dev \
+    pkg-config build-essential
 ```
 
-### Build Commands
+### Rust Setup
+```bash
+# Install Rust via rustup
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
 
-#### Build for Current Platform
+# Add required components
+rustup component add rustfmt clippy llvm-tools-preview
 
-**Linux/macOS/Unix:**
+# Install development tools (optional)
+cargo install cargo-audit cargo-deny cargo-llvm-cov
+```
+
+## 🏗️ Build System Overview
+
+### Project Structure
+```
+aegisfs/
+├── fs-core/                    ← Core filesystem library
+│   ├── Cargo.toml              ← Core dependencies & features
+│   └── src/                    ← Rust source code
+├── fs-app/
+│   ├── cli/                    ← Unified CLI application
+│   │   ├── Cargo.toml          ← CLI dependencies
+│   │   └── src/                ← CLI source code
+│   └── gui/                    ← GUI application (Tauri)
+├── scripts/
+│   ├── build-cross-platform.sh ← Main build script
+│   └── ci-helpers.sh           ← CI/CD utilities
+└── Dockerfile                  ← Container builds
+```
+
+### Build Script Features
+
+The `./scripts/build-cross-platform.sh` script provides:
+
+- **Platform Detection**: Automatically detects OS and configures builds
+- **Dependency Checking**: Verifies required tools are installed
+- **Feature Configuration**: Enables appropriate features per platform
+- **Cross-compilation**: Supports multiple target architectures
+- **Testing Integration**: Runs comprehensive test suites
+
+## 🔧 Build Commands
+
+### Basic Commands
+
+```bash
+# Build for current platform
+./scripts/build-cross-platform.sh
+
+# Build and test
+./scripts/build-cross-platform.sh test
+
+# Clean build artifacts
+./scripts/build-cross-platform.sh clean
+
+# Check dependencies only
+./scripts/build-cross-platform.sh deps
+
+# Show help
+./scripts/build-cross-platform.sh help
+```
+
+### Manual Building
+
+#### Core Library
 ```bash
 cd fs-core
+
+# Debug build
+cargo build --all-features
+
+# Release build
+cargo build --release --all-features
+
+# Build with specific features
 cargo build --release --features "fuse,encryption,compression"
 ```
 
-**Windows:**
-```batch
-cd fs-core
-cargo build --release --features "encryption,compression"
+#### CLI Application
+```bash
+cd fs-app/cli
+
+# Debug build
+cargo build
+
+# Release build
+cargo build --release
 ```
 
-#### Cross-Compilation
+### Feature Flags
 
-**From any platform to Windows:**
-```bash
-rustup target add x86_64-pc-windows-msvc
-cd fs-core
-cargo build --release --target x86_64-pc-windows-msvc --features "encryption,compression"
+The core library supports several feature flags:
+
+```toml
+[features]
+default = []
+fuse = ["dep:fuser", "dep:ctrlc", "dep:clap", "dep:env_logger"]  # FUSE filesystem support
+encryption = ["aes-gcm", "hkdf"]                                 # AES-GCM encryption
+compression = ["lz4_flex", "zstd"]                              # LZ4/ZSTD compression
+std = []                                                        # Standard library support
 ```
 
-**From any platform to Linux:**
+#### Platform-Specific Features
+- **Linux/Unix**: `fuse` feature enabled by default
+- **macOS**: `fuse` feature with macFUSE support
+- **Windows**: Limited feature set (no mounting yet)
+
+## 🌍 Cross-Compilation
+
+### Supported Targets
+
+#### Tier 1 (Fully Supported)
+- `x86_64-unknown-linux-gnu` (Linux 64-bit)
+- `x86_64-apple-darwin` (macOS Intel)
+- `aarch64-apple-darwin` (macOS Apple Silicon)
+
+#### Tier 2 (Basic Support)
+- `x86_64-pc-windows-msvc` (Windows 64-bit)
+- `x86_64-unknown-freebsd` (FreeBSD 64-bit)
+
+### Cross-Compilation Commands
+
 ```bash
+# Install target
 rustup target add x86_64-unknown-linux-gnu
+
+# Cross-compile via build script
+./scripts/build-cross-platform.sh cross x86_64-unknown-linux-gnu
+
+# Manual cross-compilation
 cd fs-core
 cargo build --release --target x86_64-unknown-linux-gnu --features "fuse,encryption,compression"
+
+cd ../fs-app/cli
+cargo build --release --target x86_64-unknown-linux-gnu
 ```
 
-**From any platform to macOS:**
+### Cross-Compilation Examples
+
+#### Linux to Windows
 ```bash
-rustup target add x86_64-apple-darwin
+# Install Windows target
+rustup target add x86_64-pc-windows-msvc
+
+# Cross-compile (note: limited features on Windows)
+./scripts/build-cross-platform.sh cross x86_64-pc-windows-msvc
+
+# Binary location: fs-app/cli/target/x86_64-pc-windows-msvc/release/aegisfs.exe
+```
+
+#### Linux to macOS
+```bash
+# Install macOS targets
+rustup target add x86_64-apple-darwin aarch64-apple-darwin
+
+# Cross-compile for Intel Macs
+./scripts/build-cross-platform.sh cross x86_64-apple-darwin
+
+# Cross-compile for Apple Silicon
+./scripts/build-cross-platform.sh cross aarch64-apple-darwin
+```
+
+## 🐳 Docker Builds
+
+### Build Containers
+
+```bash
+# Development environment
+docker build --target dev -t aegisfs:dev .
+
+# CI testing environment
+docker build --target ci -t aegisfs:ci .
+
+# Minimal runtime environment
+docker build --target runtime -t aegisfs:runtime .
+```
+
+### Container Features
+
+#### Development Container (`dev` target)
+- Full Rust toolchain with components
+- FUSE development headers
+- All development tools (cargo-audit, etc.)
+- Interactive development environment
+
+#### CI Container (`ci` target)
+- Optimized for automated testing
+- Pre-built dependencies for faster CI
+- FUSE support for integration tests
+
+#### Runtime Container (`runtime` target)
+- Minimal Debian-based image
+- Only runtime dependencies
+- Production-ready binaries
+
+### Using Docker for Development
+
+```bash
+# Interactive development
+docker run -it --privileged \
+    -v /dev/fuse:/dev/fuse \
+    -v $(pwd):/workspace \
+    aegisfs:dev
+
+# Run tests in container
+docker run --rm --privileged \
+    -v /dev/fuse:/dev/fuse \
+    aegisfs:ci
+```
+
+## 🧪 Testing Builds
+
+### Test Categories
+
+#### Unit Tests
+```bash
+# Run all unit tests
+cd fs-core && cargo test --lib
+
+# Run specific test
+cd fs-core && cargo test --lib test_inode_allocation
+```
+
+#### Integration Tests
+```bash
+# Run integration tests (requires FUSE)
+cd fs-core && cargo test --test persistence_test --test write_operations -- --test-threads=1
+
+# Note: --test-threads=1 is CRITICAL for FUSE tests
+```
+
+#### Cross-Platform Tests
+```bash
+# Test on target platform
+cargo test --target x86_64-unknown-linux-gnu --lib
+```
+
+### Performance Tests
+
+```bash
+# Run benchmarks
+cd fs-core && cargo criterion
+
+# Specific benchmark
+cd fs-core && cargo criterion filesystem_ops
+```
+
+### Coverage Analysis
+
+```bash
+# Generate coverage report
 cd fs-core
-cargo build --release --target x86_64-apple-darwin --features "fuse,encryption,compression"
+cargo install cargo-llvm-cov
+cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
+
+# HTML coverage report
+cargo llvm-cov --html --all-features --workspace
+open target/llvm-cov/html/index.html
 ```
 
-## Feature Flags
+## ⚡ Optimization
 
-AegisFS uses feature flags to enable/disable functionality:
+### Release Builds
 
-| Feature | Description | Default | Platforms |
-|---------|-------------|---------|-----------|
-| `fuse` | FUSE filesystem mounting | Auto-detected | Linux, macOS, FreeBSD |
-| `winfsp` | Windows filesystem mounting | Auto-detected | Windows (future) |
-| `encryption` | AES-GCM encryption support | Yes | All |
-| `compression` | LZ4/ZSTD compression | Yes | All |
-
-### Custom Feature Builds
-
+#### Standard Release
 ```bash
-# Minimal build (no encryption/compression)
-cargo build --release --no-default-features
-
-# Only encryption, no compression
-cargo build --release --no-default-features --features "encryption"
-
-# All features (where supported)
-cargo build --release --features "fuse,encryption,compression"
+cd fs-core && cargo build --release --all-features
+cd fs-app/cli && cargo build --release
 ```
 
-## Testing
-
-### Run Tests
-
-**All platforms:**
+#### Optimized Release
 ```bash
+# With link-time optimization
 cd fs-core
-cargo test --features "encryption,compression"
+RUSTFLAGS="-C lto=fat" cargo build --release --all-features
+
+cd ../fs-app/cli
+RUSTFLAGS="-C lto=fat" cargo build --release
 ```
 
-**Linux/macOS (with FUSE tests):**
+#### Size-Optimized Release
 ```bash
+# Minimize binary size
+cd fs-app/cli
+RUSTFLAGS="-C opt-level=z -C strip=symbols" cargo build --release
+```
+
+### Profile-Guided Optimization (Advanced)
+
+```bash
+# Step 1: Build with PGO instrumentation
 cd fs-core
-cargo test --features "fuse,encryption,compression" -- --test-threads=1
+RUSTFLAGS="-C profile-generate=/tmp/pgo-data" \
+    cargo build --release --all-features
+
+# Step 2: Run representative workload
+# (Run your typical filesystem operations)
+
+# Step 3: Build with PGO optimization
+RUSTFLAGS="-C profile-use=/tmp/pgo-data" \
+    cargo build --release --all-features
 ```
 
-### Integration Tests
+## 🔍 Build Debugging
 
-**Note:** Integration tests require admin/root privileges for FUSE mounting:
-
+### Verbose Builds
 ```bash
-# Linux/macOS
-sudo -E cargo test --test persistence_test --features "fuse,encryption,compression" -- --test-threads=1
+# Show all compilation commands
+cd fs-core && cargo build --verbose
 
-# Windows (run as Administrator)
-cargo test --test write_operations --features "encryption,compression"
+# Show build timings
+cd fs-core && cargo build --timings
 ```
 
-## Troubleshooting
-
-### Common Issues
-
-#### 1. FUSE Not Found (Linux/macOS)
-
-**Error:** `pkg-config: command not found` or `fuse3 not found`
-
-**Solution:**
+### Dependency Analysis
 ```bash
+# Show dependency tree
+cd fs-core && cargo tree
+
+# Check for duplicate dependencies
+cd fs-core && cargo tree --duplicates
+
+# Audit dependencies
+cd fs-core && cargo audit
+```
+
+### Build Cache
+
+```bash
+# Enable incremental compilation
+export CARGO_INCREMENTAL=1
+
+# Set parallel build jobs
+export CARGO_BUILD_JOBS=8
+
+# Use shared target directory
+export CARGO_TARGET_DIR=/tmp/aegisfs-target
+```
+
+## 🐛 Troubleshooting
+
+### Common Build Issues
+
+#### Missing FUSE Headers
+```bash
+# Symptoms: "fuse.h not found" or similar
+# Solution: Install FUSE development packages
+
 # Ubuntu/Debian
-sudo apt-get install libfuse3-dev pkg-config
-
-# macOS
-brew install macfuse pkg-config
+sudo apt-get install libfuse3-dev
 
 # Fedora/RHEL
-sudo yum install fuse3-devel pkgconfig
+sudo dnf install fuse3-devel
+
+# macOS
+brew install macfuse
 ```
 
-#### 2. Permission Denied (Linux/macOS)
+#### Linker Errors
+```bash
+# Symptoms: Linker errors during final build step
+# Solution: Install build tools
 
-**Error:** `Permission denied` when mounting
+# Ubuntu/Debian
+sudo apt-get install build-essential
 
-**Solution:**
+# Fedora/RHEL
+sudo dnf groupinstall "Development Tools"
+```
+
+#### Cross-Compilation Failures
+```bash
+# Symptoms: Target not found errors
+# Solution: Install target
+
+rustup target add x86_64-unknown-linux-gnu
+rustup target list --installed
+```
+
+#### Out of Memory During Build
+```bash
+# Reduce parallel jobs
+export CARGO_BUILD_JOBS=2
+
+# Use less optimization for debug builds
+cd fs-core && cargo build --profile dev
+```
+
+### Platform-Specific Issues
+
+#### macOS: macFUSE Not Found
+```bash
+# Install macFUSE
+brew install macfuse
+
+# May require system reboot for kernel extension
+```
+
+#### Windows: FUSE Not Supported
+```bash
+# Currently limited support on Windows
+# Build without FUSE features
+cd fs-core && cargo build --no-default-features
+```
+
+#### Linux: Permission Denied
 ```bash
 # Add user to fuse group
 sudo usermod -a -G fuse $USER
-# Then logout and login again
-
-# Or enable user namespaces
-echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
+# Logout and login again
 ```
 
-#### 3. Visual Studio Build Tools Missing (Windows)
+## 📦 Distribution
 
-**Error:** `error: Microsoft C++ Build Tools`
+### Binary Packaging
 
-**Solution:**
-- Install Visual Studio Build Tools from: https://visualstudio.microsoft.com/visual-cpp-build-tools/
-- Or install Visual Studio Community Edition
-
-#### 4. Cross-compilation Linker Errors
-
-**Error:** `linker cc not found` when cross-compiling
-
-**Solution:**
+#### Linux Packages
 ```bash
-# Install cross-compilation toolchain
-# For Windows target from Linux:
-sudo apt-get install gcc-mingw-w64
+# Create .deb package (Ubuntu/Debian)
+# (Packaging scripts in development)
 
-# For Linux target from macOS:
-brew install FiloSottile/musl-cross/musl-cross
+# Create .rpm package (Fedora/RHEL)
+# (Packaging scripts in development)
 ```
 
-### Dependency Verification
-
-Use the dependency checker:
-
+#### macOS
 ```bash
-# Linux/macOS
-./build-cross-platform.sh deps
+# Create .app bundle
+# (Packaging scripts in development)
 
-# Windows
-build-cross-platform.bat deps
+# Homebrew formula
+# (In development)
 ```
 
-## Available Binaries
+#### Windows
+```bash
+# Create .msi installer
+# (Packaging scripts in development)
+```
 
-After building, you'll find these binaries in `fs-core/target/release/`:
-
-| Binary | Description | Platform Support |
-|--------|-------------|------------------|
-| `aegisfs-format` | Format devices with AegisFS | All platforms |
-| `aegisfs-mount` | Mount AegisFS filesystems | Linux, macOS, FreeBSD |
-| `aegisfs-snapshot` | Snapshot management | All platforms |
-| `aegisfs-scrub` | Filesystem integrity checking | All platforms |
-
-## Usage Examples
-
-### Format and Mount (Linux/macOS)
+### Checksums and Signatures
 
 ```bash
-# Create a test image
-dd if=/dev/zero of=test.img bs=1M count=100
+# Generate checksums
+sha256sum fs-app/cli/target/release/aegisfs > aegisfs.sha256
 
-# Format with AegisFS
-./target/release/aegisfs-format test.img 100 --force
-
-# Create mount point
-mkdir /tmp/aegisfs_mount
-
-# Mount the filesystem
-./target/release/aegisfs-mount test.img /tmp/aegisfs_mount
-
-# Use the filesystem
-echo "Hello AegisFS!" > /tmp/aegisfs_mount/test.txt
-cat /tmp/aegisfs_mount/test.txt
-
-# Unmount
-fusermount -u /tmp/aegisfs_mount
+# Verify checksum
+sha256sum -c aegisfs.sha256
 ```
 
-### File Operations (All Platforms)
+## 🔐 Security Considerations
+
+### Reproducible Builds
 
 ```bash
-# Create snapshots
-./target/release/aegisfs-snapshot test.img create "backup-$(date)"
+# Use fixed Rust version
+rustup default 1.75.0
 
-# List snapshots
-./target/release/aegisfs-snapshot test.img list
+# Set deterministic flags
+export RUSTFLAGS="-C debuginfo=0 -C strip=symbols"
 
-# Check filesystem integrity
-./target/release/aegisfs-scrub test.img
+# Build with fixed timestamp
+SOURCE_DATE_EPOCH=1672531200 cargo build --release
 ```
 
-## Development
-
-### Setting up Development Environment
+### Dependency Auditing
 
 ```bash
-# Install development tools
-rustup component add rustfmt clippy
-cargo install cargo-audit cargo-deny
+# Security audit
+cd fs-core && cargo audit
 
-# Run development checks
-cd fs-core
-cargo fmt --all
-cargo clippy --all-targets --all-features
-cargo audit
+# License checking
+cd fs-core && cargo deny check
 ```
 
-### Contributing
+## 📈 Performance
 
-1. Ensure your code compiles on all supported platforms
-2. Run the full test suite
-3. Follow the existing code style
-4. Add tests for new functionality
+### Build Performance
 
-For more detailed development information, see [docs/development.md](docs/development.md).
+#### Faster Builds
+```bash
+# Use faster linker (Linux)
+sudo apt install lld
+export RUSTFLAGS="-C link-arg=-fuse-ld=lld"
 
-## License
+# Use parallel frontend (unstable)
+export RUSTFLAGS="-Z threads=8"
+cargo +nightly build --release
+```
 
-AegisFS is dual-licensed under MIT OR Apache-2.0. 
+#### Build Caching
+```bash
+# Use sccache for distributed builds
+cargo install sccache
+export RUSTC_WRAPPER=sccache
+```
+
+### Runtime Performance
+
+Built binaries include optimizations for:
+- **Fast I/O**: Async operations with Tokio
+- **Memory Efficiency**: Minimal heap allocations
+- **Cache Optimization**: Write-back caching with configurable intervals
+- **SIMD**: Vectorized operations where applicable
+
+---
+
+This build guide covers all aspects of building AegisFS from source. For development workflows, see [development.md](development.md). 

@@ -134,14 +134,14 @@ build_current_platform() {
     print_status "Detected OS: $os"
     
     # Build the core library first
-    cd ../fs-core
     print_status "Building AegisFS core library..."
+    cd fs-core
     cargo build --release --features "fuse,encryption,compression"
     cd ..
     
     # Build the unified CLI
-    cd fs-app/cli
     print_status "Building AegisFS unified CLI..."
+    cd fs-app/cli
     
     case $os in
         "linux"|"freebsd")
@@ -177,14 +177,14 @@ cross_compile() {
     rustup target add $target
     
     # Build core library first
-    cd fs-core
     print_status "Cross-compiling AegisFS core library for $target..."
+    cd fs-core
     cargo build --release --target $target --features "fuse,encryption,compression"
     cd ..
     
     # Build unified CLI
-    cd fs-app/cli
     print_status "Cross-compiling AegisFS CLI for $target..."
+    cd fs-app/cli
     
     case $target in
         *"windows"*)
@@ -206,6 +206,62 @@ cross_compile() {
     esac
     
     cd ../..
+}
+
+# Run tests
+run_tests() {
+    print_status "Running test suite..."
+    
+    # Unit tests (core library)
+    print_status "Running core library unit tests..."
+    cd fs-core
+    cargo test --lib --features "encryption,compression"
+    cd ..
+    
+    # Unit tests (CLI)
+    print_status "Running CLI unit tests..."
+    cd fs-app/cli
+    cargo test
+    cd ..
+    
+    # Integration tests (if FUSE is available)
+    if command -v fusermount &> /dev/null || command -v umount &> /dev/null; then
+        print_status "Running integration tests (FUSE required)..."
+        cd fs-core
+        cargo test --test persistence_test --test write_operations -- --test-threads=1
+        cd ..
+    else
+        print_warning "FUSE not available, skipping integration tests"
+    fi
+    
+    print_success "All tests completed!"
+}
+
+# Clean build artifacts
+clean_build() {
+    print_status "Cleaning build artifacts..."
+    
+    cd fs-core
+    cargo clean
+    cd ..
+    
+    cd fs-app/cli
+    cargo clean
+    cd ..
+    
+    # Clean GUI if it exists
+    if [[ -d "fs-app/gui" ]]; then
+        cd fs-app/gui
+        if [[ -f "package.json" ]]; then
+            rm -rf node_modules
+        fi
+        if [[ -f "Cargo.toml" ]]; then
+            cargo clean
+        fi
+        cd ../..
+    fi
+    
+    print_success "Clean completed!"
 }
 
 # Show usage information
@@ -262,24 +318,10 @@ main() {
             ;;
         "test")
             check_dependencies
-            cd ../fs-core
-            print_status "Running core library tests..."
-            cargo test --features "encryption,compression"
-            cd ../fs-app/cli
-            print_status "Running CLI tests..."
-            cargo test
-            cd ../..
-            print_success "Tests completed successfully!"
+            run_tests
             ;;
         "clean")
-            cd ../fs-core
-            print_status "Cleaning core library build artifacts..."
-            cargo clean
-            cd ../fs-app/cli
-            print_status "Cleaning CLI build artifacts..."
-            cargo clean
-            cd ../..
-            print_success "Clean completed!"
+            clean_build
             ;;
         "deps")
             check_dependencies

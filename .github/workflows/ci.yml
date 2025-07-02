@@ -43,10 +43,15 @@ jobs:
         cd fs-core
         cargo fmt --all -- --check
     
-    - name: Check Clippy
+    - name: Check Clippy (core)
       run: |
         cd fs-core
-        cargo clippy --all-targets --all-features
+        cargo clippy --all-targets --all-features -- -D warnings
+    
+    - name: Check Clippy (CLI)
+      run: |
+        cd fs-app/cli
+        cargo clippy --all-targets -- -D warnings
     
     - name: Check docs
       run: |
@@ -77,7 +82,7 @@ jobs:
     - name: Install cargo-audit
       run: cargo install cargo-audit
     
-    - name: Security audit
+    - name: Security audit (core)
       run: |
         cd fs-core
         cargo audit
@@ -117,11 +122,16 @@ jobs:
     - name: Install cargo-llvm-cov
       run: cargo install cargo-llvm-cov
     
-    - name: Run unit tests with coverage
+    - name: Run unit tests with coverage (core)
       run: |
         cd fs-core
         cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info \
-          -- --skip test_data_persistence
+          -- --lib
+    
+    - name: Run unit tests (CLI)
+      run: |
+        cd fs-app/cli
+        cargo test
     
     - name: Upload coverage to Codecov
       if: env.CODECOV_TOKEN != ''
@@ -159,6 +169,13 @@ jobs:
         sudo chmod 666 /dev/fuse
         # Add user to fuse group if it exists
         sudo usermod -a -G fuse $USER || true
+    
+    - name: Build project first
+      run: |
+        cd fs-core
+        cargo build --all-features
+        cd ../fs-app/cli
+        cargo build
     
     - name: Run integration tests
       run: |
@@ -206,20 +223,26 @@ jobs:
         key: build-${{ matrix.os }}
         workspaces: fs-core
     
-    - name: Install platform dependencies
+    - name: Install platform dependencies (Linux)
+      if: runner.os == 'Linux'
       run: |
-        if [ "$RUNNER_OS" == "Linux" ]; then
-          sudo apt-get update
-          sudo apt-get install -y fuse3 libfuse3-dev pkg-config
-        elif [ "$RUNNER_OS" == "macOS" ]; then
-          brew install macfuse pkg-config
-        fi
-      shell: bash
+        sudo apt-get update
+        sudo apt-get install -y fuse3 libfuse3-dev pkg-config
     
-    - name: Build all binaries
+    - name: Install platform dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew install macfuse pkg-config
+    
+    - name: Build core library
       run: |
         cd fs-core
-        cargo build --release --all-targets --target ${{ matrix.target }}
+        cargo build --release --target ${{ matrix.target }} --all-features
+    
+    - name: Build CLI application
+      run: |
+        cd fs-app/cli
+        cargo build --release --target ${{ matrix.target }}
     
     - name: Run basic tests (non-FUSE)
       run: |
@@ -231,9 +254,9 @@ jobs:
       with:
         name: aegisfs-${{ matrix.target }}
         path: |
-          fs-core/target/${{ matrix.target }}/release/aegisfs-*
-          !fs-core/target/${{ matrix.target }}/release/*.d
-          !fs-core/target/${{ matrix.target }}/release/deps/
+          fs-app/cli/target/${{ matrix.target }}/release/aegisfs*
+          !fs-app/cli/target/${{ matrix.target }}/release/*.d
+          !fs-app/cli/target/${{ matrix.target }}/release/deps/
 
   # Job 6: Performance benchmarks
   benchmarks:
@@ -292,6 +315,7 @@ jobs:
         context: .
         push: false
         tags: aegisfs:test
+        target: ci
         cache-from: type=gha
         cache-to: type=gha,mode=max
     
@@ -299,7 +323,7 @@ jobs:
       run: |
         docker run --rm --privileged \
           -v /dev/fuse:/dev/fuse \
-          aegisfs:test bash -c "cd fs-core && cargo test --lib"
+          aegisfs:test bash -c "cd /workspace && ./scripts/build-cross-platform.sh test"
 
   # Job 8: Memory safety and leak detection
   memory-safety:
@@ -319,6 +343,11 @@ jobs:
       with:
         key: miri
         workspaces: fs-core
+    
+    - name: Install FUSE development headers
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y fuse3 libfuse3-dev pkg-config
     
     - name: Run MIRI on unit tests
       run: |
@@ -350,10 +379,15 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y fuse3 libfuse3-dev pkg-config
     
-    - name: Build optimized release
+    - name: Build optimized release (core)
       run: |
         cd fs-core
         cargo build --release --all-features
+    
+    - name: Build optimized release (CLI)
+      run: |
+        cd fs-app/cli
+        cargo build --release
     
     - name: Run full test suite
       run: |
@@ -362,9 +396,9 @@ jobs:
     
     - name: Validate binary sizes
       run: |
-        ls -la fs-core/target/release/aegisfs-*
+        ls -la fs-app/cli/target/release/aegisfs*
         # Ensure binaries aren't unexpectedly large (>50MB each)
-        find fs-core/target/release -name "aegisfs-*" -type f -size +50M -exec echo "Binary {} is too large" \; -exec exit 1 \;
+        find fs-app/cli/target/release -name "aegisfs*" -type f -size +50M -exec echo "Binary {} is too large" \; -exec exit 1 \;
 
 # Summary job that depends on all others
   ci-success:
@@ -390,7 +424,7 @@ jobs:
               "${{ needs.build-cross-platform.result }}" != "success" || \
               "${{ needs.docker.result }}" != "success" || \
               "${{ needs.memory-safety.result }}" != "success" || \
-              "${{ needs.release-validation.result }}" != "success" ]]; then
+              ("${{ github.ref }}" == "refs/heads/main" && "${{ needs.release-validation.result }}" != "success") ]]; then
           echo "One or more required jobs failed"
           exit 1
         else
