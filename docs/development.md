@@ -110,7 +110,7 @@ cd fs-core && cargo criterion
 ./scripts/ci-helpers.sh benchmarks
 
 # Memory profiling (Linux only)
-cd fs-core && valgrind --tool=memcheck --leak-check=full ./target/release/aegisfs-format --help
+cd fs-app/cli && valgrind --tool=memcheck --leak-check=full ./target/release/aegisfs --help
 ```
 
 ### Building
@@ -266,14 +266,14 @@ export RUST_BACKTRACE=1
 cd fs-core && cargo build --all-features
 
 # Use debugger
-cd fs-core && gdb ./target/debug/aegisfs-mount
+cd fs-app/cli && gdb ./target/debug/aegisfs --args mount device.img /mnt/point
 ```
 
 ### FUSE Debugging
 
 ```bash
 # Mount with debug output
-cd fs-core && ./target/debug/aegisfs-mount -d device.img /mnt/point
+cd fs-app/cli && ./target/debug/aegisfs mount device.img /mnt/point
 
 # Monitor FUSE operations
 fusermount -u /mnt/point  # unmount
@@ -284,7 +284,7 @@ mount.fuse device.img /mnt/point -o debug
 
 ```bash
 # Valgrind memory check
-cd fs-core && valgrind --tool=memcheck --leak-check=full ./target/release/aegisfs-format
+cd fs-app/cli && valgrind --tool=memcheck --leak-check=full ./target/release/aegisfs
 
 # Address sanitizer (nightly Rust)
 cd fs-core && cargo +nightly run -Z sanitizer=address
