@@ -240,10 +240,9 @@ After building, you'll find these binaries in `fs-core/target/release/`:
 
 | Binary | Description | Platform Support |
 |--------|-------------|------------------|
-| `aegisfs-format` | Format devices with AegisFS | All platforms |
-| `aegisfs-mount` | Mount AegisFS filesystems | Linux, macOS, FreeBSD |
-| `aegisfs-snapshot` | Snapshot management | All platforms |
-| `aegisfs-scrub` | Filesystem integrity checking | All platforms |
+| `aegisfs` | Unified CLI – format, mount, snapshot, scrub | All platforms (mounting supported on Unix-like systems) |
+
+After building, you'll find the unified CLI in `fs-app/cli/target/release/`:
 
 ## Usage Examples
 
@@ -254,13 +253,13 @@ After building, you'll find these binaries in `fs-core/target/release/`:
 dd if=/dev/zero of=test.img bs=1M count=100
 
 # Format with AegisFS
-./target/release/aegisfs-format test.img 100 --force
+./fs-app/cli/target/release/aegisfs format test.img --size 100 --force
 
 # Create mount point
 mkdir /tmp/aegisfs_mount
 
 # Mount the filesystem
-./target/release/aegisfs-mount test.img /tmp/aegisfs_mount
+./fs-app/cli/target/release/aegisfs mount test.img /tmp/aegisfs_mount
 
 # Use the filesystem
 echo "Hello AegisFS!" > /tmp/aegisfs_mount/test.txt
@@ -274,13 +273,13 @@ fusermount -u /tmp/aegisfs_mount
 
 ```bash
 # Create snapshots
-./target/release/aegisfs-snapshot test.img create "backup-$(date)"
+./fs-app/cli/target/release/aegisfs snapshot test.img create "backup-$(date)"
 
 # List snapshots
-./target/release/aegisfs-snapshot test.img list
+./fs-app/cli/target/release/aegisfs snapshot test.img list
 
 # Check filesystem integrity
-./target/release/aegisfs-scrub test.img
+./fs-app/cli/target/release/aegisfs scrub test.img
 ```
 
 ## Development

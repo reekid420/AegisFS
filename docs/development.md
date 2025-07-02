@@ -110,7 +110,7 @@ cd fs-core && cargo criterion
 ./scripts/ci-helpers.sh benchmarks
 
 # Memory profiling (Linux only)
-cd fs-core && valgrind --tool=memcheck --leak-check=full ./target/release/aegisfs-format --help
+cd fs-app/cli && valgrind --tool=memcheck --leak-check=full ./target/release/aegisfs --help
 ```
 
 ### Building
@@ -266,14 +266,14 @@ export RUST_BACKTRACE=1
 cd fs-core && cargo build --all-features
 
 # Use debugger
-cd fs-core && gdb ./target/debug/aegisfs-mount
+cd fs-core && gdb ./target/debug/aegisfs
 ```
 
 ### FUSE Debugging
 
 ```bash
 # Mount with debug output
-cd fs-core && ./target/debug/aegisfs-mount -d device.img /mnt/point
+cd fs-app/cli && ./target/debug/aegisfs mount device.img /mnt/point
 
 # Monitor FUSE operations
 fusermount -u /mnt/point  # unmount
@@ -284,7 +284,7 @@ mount.fuse device.img /mnt/point -o debug
 
 ```bash
 # Valgrind memory check
-cd fs-core && valgrind --tool=memcheck --leak-check=full ./target/release/aegisfs-format
+cd fs-app/cli && valgrind --tool=memcheck --leak-check=full ./target/release/aegisfs
 
 # Address sanitizer (nightly Rust)
 cd fs-core && cargo +nightly run -Z sanitizer=address
@@ -325,26 +325,22 @@ cd fs-core && cargo +nightly run -Z sanitizer=address
    sudo modprobe fuse
    ls -la /dev/fuse
    ```
-
 2. **Permission denied on mount**:
    ```bash
    sudo usermod -a -G fuse $USER
    # Logout and login again
    ```
-
 3. **Build failures**:
    ```bash
    cd fs-core && cargo clean
    ./scripts/ci-helpers.sh install-deps
    ```
-
 4. **Test failures in CI**:
    - Check FUSE setup in CI environment
    - Ensure single-threaded execution for integration tests
    - Verify temporary directory cleanup
 
 ### Getting Help
-
 - Check existing issues on GitHub
 - Run `./scripts/ci-helpers.sh help` for tool usage
 - Review CI logs for detailed error information
@@ -370,4 +366,4 @@ Before submitting a PR, ensure:
 - [ ] Breaking changes documented
 - [ ] Performance impact considered
 
-The automated CI will run the same checks and provide feedback on your PR. 
+The automated CI will run the same checks and provide feedback on your PR.

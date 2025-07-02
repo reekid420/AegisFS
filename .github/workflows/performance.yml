@@ -163,10 +163,9 @@ jobs:
     - name: Run memory profile
       run: |
         cd fs-core
-        # Simple memory test - in practice you'd want more comprehensive profiling
         valgrind --tool=memcheck --leak-check=full --show-leak-kinds=all \
           --track-origins=yes --verbose --log-file=../valgrind-output.txt \
-          ./target/release/aegisfs-format --help || true
+          ./target/release/aegisfs --help || true
 
     - name: Upload memory profiling results
       uses: actions/upload-artifact@v4

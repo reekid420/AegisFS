@@ -212,7 +212,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y fuse3 libfuse3-dev pkg-config
         elif [ "$RUNNER_OS" == "macOS" ]; then
-          brew install macfuse pkg-config
+          # macFUSE requires a manual license prompt and is not needed for non-FUSE builds in CI.
+          # We only need pkg-config for dependency resolution.
+          brew install pkg-config || true
         fi
       shell: bash
     
