@@ -294,6 +294,7 @@ jobs:
         tags: aegisfs:test
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        target: ci
     
     - name: Test in Docker container
       run: |

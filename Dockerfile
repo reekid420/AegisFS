@@ -61,7 +61,8 @@ RUN apt-get update && apt-get install -y \
 COPY --chown=developer:developer . .
 
 # Build the project
-RUN cd fs-core && cargo build --all-features
+RUN cd fs-core && cargo build --release --all-features \
+    && cd ../fs-app/cli && cargo build --release --all-features
 
 # Expose any ports needed for development
 EXPOSE 8080
@@ -81,10 +82,10 @@ RUN useradd -m -s /bin/bash aegisfs && \
     usermod -a -G fuse aegisfs
 
 # Copy built binaries from development stage
-COPY --from=dev --chown=aegisfs:aegisfs /workspace/fs-core/target/release/aegisfs-* /usr/local/bin/
+COPY --from=dev --chown=aegisfs:aegisfs /workspace/fs-app/cli/target/release/aegisfs /usr/local/bin/aegisfs
 
 USER aegisfs
 WORKDIR /home/aegisfs
 
-# Default to the mount command
-CMD ["aegisfs-mount", "--help"]
+# Default to help for the unified CLI
+CMD ["aegisfs", "--help"]

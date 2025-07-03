@@ -91,6 +91,7 @@ See [dev-roadmap.md](dev-roadmap.md) for detailed progress and development timel
 - Cargo
 - FUSE (for development)
 - Docker (for containerized development)
+  See [docs/DOCKER.md](docs/DOCKER.md) for detailed container usage.
 
 ### Building from Source
 

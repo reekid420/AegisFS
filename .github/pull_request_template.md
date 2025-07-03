@@ -33,7 +33,7 @@ Please provide a more detailed description of the changes:
 Describe any manual testing you performed:
 ```
 Example:
-1. Formatted a 1GB device with `aegisfs-format`
+1. Formatted a 1GB device with `aegisfs format` (unified CLI)
 2. Mounted the filesystem and created test files
 3. Verified data persistence after unmount/remount
 4. Checked performance with large files
