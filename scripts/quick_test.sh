@@ -34,7 +34,14 @@
     cd /tmp/aegisfs
     if ! (cat /tmp/aegisfs/test.txt | grep -q "test" && cat /tmp/aegisfs/test2.txt | grep -q "test2" && echo "${TEST_FILE_MD5_HASH} /tmp/aegisfs/test.bin" | md5sum -c); then
         echo "files are inconsistent after large file"
+        echo "Unmounting device"
+        sudo fusermount -u /tmp/aegisfs
+        echo "Device unmounted"
+        echo "Test failed"
         exit 1
     fi
     echo "files are consistent after large file"
-
+    echo "Unmounting device"
+    sudo fusermount -u /tmp/aegisfs
+    echo "Device unmounted"
+    echo "Test complete"
