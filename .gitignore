@@ -4,8 +4,6 @@
 **/Cargo.lock
 mount-log.log.old
 # IDE
-quick_test.sh
-quick-deploy.sh
 .idea/
 *.swp
 *~

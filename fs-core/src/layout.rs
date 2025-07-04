@@ -1,5 +1,6 @@
 //! On-disk layout definitions for AegisFS
 
+use crate::block_bitmap::{BlockBitmap, BlockBitmapError};
 use crate::blockdev::{BlockDevice, BlockDeviceError, BLOCK_SIZE};
 use crate::cache::BlockCache;
 use crate::format::{DirEntry, FormatError, Inode as DiskInode, Superblock};
@@ -149,6 +150,9 @@ pub trait DiskFsTrait: Send + Sync {
     /// Allocate a new data block
     async fn allocate_data_block(&mut self) -> Result<u64, FsError>;
 
+    /// Free a data block
+    async fn deallocate_data_block(&mut self, block_idx: u64) -> Result<(), FsError>;
+
     /// Read directory entries from a directory inode
     async fn read_directory_entries(&self, inode: &DiskInode) -> Result<Vec<crate::format::DirEntry>, FsError>;
 }
@@ -159,6 +163,7 @@ pub struct DiskFs {
     cache: BlockCache,
     layout: Layout,
     superblock: Superblock,
+    block_bitmap: Arc<RwLock<BlockBitmap>>,
 }
 
 impl DiskFs {
@@ -168,12 +173,14 @@ impl DiskFs {
         cache: BlockCache,
         layout: Layout,
         superblock: Superblock,
+        block_bitmap: Arc<RwLock<BlockBitmap>>,
     ) -> Self {
         Self {
             device,
             cache,
             layout,
             superblock,
+            block_bitmap,
         }
     }
 
@@ -292,10 +299,78 @@ impl DiskFs {
             Err(FsError::InvalidArgument(format!(
                 "File too large. Max supported size: ~{} MB", 
                 (DIRECT_BLOCKS * BLOCK_SIZE + POINTERS_PER_BLOCK * BLOCK_SIZE) / (1024 * 1024)
-            )))
+                        )))
+        }
+    }
+
+    /// Free all blocks used by an inode (for file deletion)
+    async fn free_inode_blocks(&mut self, inode: &DiskInode) -> Result<(), FsError> {
+        log::info!("BLOCK_BITMAP: Freeing all blocks for inode (mode=0o{:o}, size={}, blocks={})", 
+                  inode.mode, inode.size, inode.blocks);
+        
+        let mut freed_count = 0;
+        let max_blocks = DIRECT_BLOCKS as u64 + POINTERS_PER_BLOCK as u64; // Support direct + single indirect
+
+        // Free all data blocks used by the file
+        for block_idx in 0..max_blocks {
+            match self.get_file_block(inode, block_idx).await {
+                Ok(block_num) => {
+                    if block_num > 0 {
+                        // Free the data block
+                        match self.deallocate_data_block(block_num).await {
+                            Ok(()) => {
+                                freed_count += 1;
+                                log::debug!("BLOCK_BITMAP: Freed data block {} (index {})", block_num, block_idx);
+                            }
+                            Err(e) => {
+                                log::warn!("BLOCK_BITMAP: Failed to free data block {}: {:?}", block_num, e);
+                            }
+                        }
+                    }
+                }
+                Err(_) => break, // Error or reached limit
+            }
+        }
+
+        // Free indirect block if it exists
+        let indirect_block = inode.block[SINGLE_INDIRECT_BLOCK];
+        if indirect_block > 0 {
+            match self.deallocate_data_block(indirect_block).await {
+                Ok(()) => {
+                    freed_count += 1;
+                    log::debug!("BLOCK_BITMAP: Freed indirect block {}", indirect_block);
+                }
+                Err(e) => {
+                    log::warn!("BLOCK_BITMAP: Failed to free indirect block {}: {:?}", indirect_block, e);
+                }
+            }
+        }
+
+        log::info!("BLOCK_BITMAP: Freed {} blocks for inode", freed_count);
+        Ok(())
+    }
+
+    /// Save block bitmap to disk (for persistence during operations)
+    async fn save_block_bitmap(&self) -> Result<(), FsError> {
+        let bitmap = self.block_bitmap.read();
+        
+        match bitmap.save_to_disk(self.device.clone(), &self.layout).await {
+            Ok(()) => {
+                log::debug!("BLOCK_BITMAP: Successfully saved bitmap to disk");
+                Ok(())
+            }
+            Err(e) => {
+                log::error!("BLOCK_BITMAP: Failed to save bitmap to disk: {:?}", e);
+                Err(FsError::Io(BlockDeviceError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to save block bitmap: {:?}", e)
+                ))))
+            }
         }
     }
 }
+
+
 
 #[async_trait]
 impl DiskFsTrait for DiskFs {
@@ -325,11 +400,21 @@ impl DiskFsTrait for DiskFs {
         log::info!("LAYOUT MOUNT: block_count={}, inode_count={}, inode_table_start={}", 
                    block_count, inode_count, layout.inode_table);
 
+        // Load block bitmap from disk
+        let block_bitmap = Arc::new(RwLock::new(
+            BlockBitmap::load_from_disk(device.clone(), &layout).await
+                .map_err(|e| FsError::Io(BlockDeviceError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other, 
+                    format!("Failed to load block bitmap: {:?}", e)
+                ))))?
+        ));
+
         Ok(Self {
             device,
             cache,
             layout,
             superblock,
+            block_bitmap,
         })
     }
 
@@ -458,6 +543,67 @@ impl DiskFsTrait for DiskFs {
             .write_block(0, &superblock_buf)
             .await
             .map_err(FsError::from)?;
+
+        // Initialize and save block bitmap
+        let mut block_bitmap = BlockBitmap::new(
+            block_count,
+            layout.data_blocks,
+            layout.data_blocks_count,
+        );
+        
+        // Initialize all blocks as free
+        block_bitmap.initialize_as_free();
+        
+        // Mark the root directory's data block as allocated
+        if let Err(e) = block_bitmap.free(0) {
+            log::warn!("Failed to mark root data block as allocated: {:?}", e);
+        } else {
+            // Actually allocate it properly
+            if let Some(allocated_block) = block_bitmap.allocate() {
+                log::info!("FORMAT: Allocated root directory data block: {}", allocated_block);
+            } else {
+                log::error!("FORMAT: Failed to allocate root directory data block");
+            }
+        }
+        
+        // Save block bitmap to disk
+        let device_arc = Arc::new(
+            crate::blockdev::FileBackedBlockDevice::open(
+                std::path::Path::new("/dev/null"), // Dummy path - we'll use the actual device
+                false
+            ).await.map_err(|e| FsError::Io(BlockDeviceError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to create device wrapper: {:?}", e)
+            ))))?
+        );
+        
+        // Create a temporary wrapper to save the bitmap
+        let mut temp_bitmap_blocks = Vec::new();
+        let bitmap_size = ((layout.data_blocks_count + 7) / 8) as usize;
+        let mut bytes_written = 0;
+        
+        // Prepare bitmap blocks for writing
+        for block_offset in 0..layout.block_bitmap_blocks {
+            let mut block_data = vec![0u8; block_size as usize];
+            
+            let bytes_to_copy = std::cmp::min(block_size as usize, bitmap_size - bytes_written);
+            if bytes_to_copy > 0 && bytes_written < block_bitmap.bitmap_data().len() {
+                block_data[..bytes_to_copy]
+                    .copy_from_slice(&block_bitmap.bitmap_data()[bytes_written..bytes_written + bytes_to_copy]);
+                bytes_written += bytes_to_copy;
+            }
+            
+            temp_bitmap_blocks.push((layout.block_bitmap + block_offset, block_data));
+        }
+        
+        // Write bitmap blocks to device
+        for (block_num, block_data) in temp_bitmap_blocks {
+            device.write_block(block_num, &block_data).await?;
+            log::debug!("FORMAT: Wrote block bitmap block {}", block_num);
+        }
+        
+        log::info!("FORMAT: Block bitmap initialized and saved - {} total blocks, {} free blocks", 
+                  block_bitmap.total_blocks(), block_bitmap.free_blocks());
 
         // Sync the device to ensure all writes are persisted
         device.sync().await?;
@@ -760,21 +906,59 @@ impl DiskFsTrait for DiskFs {
         Ok(())
     }
 
-    /// Allocate a new data block (simple implementation)
+    /// Allocate a new data block using block bitmap
     async fn allocate_data_block(&mut self) -> Result<u64, FsError> {
-        // TODO: Implement proper block bitmap management
-        // For now, use a simple counter-based allocation
-        static mut NEXT_BLOCK: u64 = 1;
-
-        unsafe {
-            let block = NEXT_BLOCK;
-            NEXT_BLOCK += 1;
-
-            if block >= self.layout.data_blocks_count {
-                return Err(FsError::NoFreeBlocks);
+        let mut bitmap = self.block_bitmap.write();
+        
+        match bitmap.allocate() {
+            Some(block_idx) => {
+                // Convert block index to actual block number
+                let actual_block_num = self.layout.data_blocks + block_idx;
+                
+                // Update superblock free blocks count
+                if self.superblock.free_blocks > 0 {
+                    self.superblock.free_blocks -= 1;
+                }
+                
+                log::info!(
+                    "BLOCK_BITMAP: Allocated data block {} (index {}), {} free blocks remaining",
+                    actual_block_num,
+                    block_idx,
+                    bitmap.free_blocks()
+                );
+                
+                Ok(block_idx)
             }
+            None => {
+                log::error!("BLOCK_BITMAP: No free blocks available - {} total blocks, {} free",
+                           bitmap.total_blocks(), bitmap.free_blocks());
+                Err(FsError::NoFreeBlocks)
+            }
+        }
+    }
 
-            Ok(block)
+    /// Free a data block using block bitmap
+    async fn deallocate_data_block(&mut self, block_idx: u64) -> Result<(), FsError> {
+        let mut bitmap = self.block_bitmap.write();
+        
+        match bitmap.free(block_idx) {
+            Ok(()) => {
+                // Update superblock free blocks count
+                self.superblock.free_blocks += 1;
+                
+                let actual_block_num = self.layout.data_blocks + block_idx;
+                log::info!(
+                    "BLOCK_BITMAP: Freed data block {} (index {}), {} free blocks total",
+                    actual_block_num,
+                    block_idx,
+                    bitmap.free_blocks()
+                );
+                Ok(())
+            }
+            Err(e) => {
+                log::error!("BLOCK_BITMAP: Failed to free block {}: {:?}", block_idx, e);
+                Err(FsError::InvalidArgument(format!("Failed to free block {}: {:?}", block_idx, e)))
+            }
         }
     }
 

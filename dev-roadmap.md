@@ -6,6 +6,7 @@ This end-to-end plan breaks the project into phases, each with milestones, deliv
 
 ## Repository Root Layout
 
+```
 aegisfs/                     ← Project root
 ├── fs-core/                    ← Core filesystem library (Rust + C/C++)
 │   ├── src/
@@ -21,33 +22,61 @@ aegisfs/                     ← Project root
 │   │   │   ├── audit_logs/
 │   │   │   ├── metrics/
 │   │   │   └── vfs_layer/
-│   │   └── bindings/           ← C/C++ headers, Rust bindings
+│   │   ├── bindings/           ← C/C++ headers, Rust bindings
+│   │   ├── blockdev/           ← Block device abstraction
+│   │   ├── format/             ← Filesystem formatting
+│   │   ├── cache.rs            ← Caching system
+│   │   ├── error.rs            ← Error handling
+│   │   └── layout.rs           ← Disk layout definitions
 │   ├── include/                ← Public headers for kernel mode
 │   ├── tests/                  ← Unit & integration tests
 │   ├── benches/                ← Benchmark harnesses
-│   └── Cargo.toml / Makefile
+│   ├── build.rs               ← Build script
+│   ├── Cargo.toml             ← Rust package manifest
+│   └── deny.toml              ← Dependency security config
 ├── fs-app/                     ← Management application
-│   ├── cli/
-│   │   └── main.rs             ← Command-line tool
-│   ├── gui/
-│   │   ├── src/                ← Native GUI (Iced/Qt/egui)
-│   │   │   └── assets/         ← Icons, translations
-│   │   └── config/             ← Default YAML/JSON schemas
+│   ├── cli/                    ← Command-line interface
+│   │   ├── src/
+│   │   │   ├── commands/       ← CLI subcommands
+│   │   │   │   ├── format.rs
+│   │   │   │   ├── mount.rs
+│   │   │   │   ├── snapshot.rs
+│   │   │   │   └── scrub.rs
+│   │   │   └── main.rs         ← CLI entry point
+│   │   └── Cargo.toml
+│   ├── gui/                    ← Native GUI (Tauri + TypeScript)
+│   │   ├── src/                ← Frontend source
+│   │   │   └── assets/         ← Icons, images
+│   │   ├── src-tauri/          ← Rust backend
+│   │   │   ├── src/
+│   │   │   ├── icons/          ← App icons
+│   │   │   ├── capabilities/   ← Security permissions
+│   │   │   ├── Cargo.toml
+│   │   │   └── tauri.conf.json ← Tauri configuration
+│   │   ├── package.json        ← Node.js dependencies
+│   │   ├── vite.config.ts      ← Vite bundler config
+│   │   └── tsconfig.json       ← TypeScript config
 │   └── pkg/                    ← Build scripts, installers
 ├── fs-kmod/                    ← Linux kernel module prototype
-│   ├── src/
-│   └── Makefile / Kconfig
+│   └── src/
 ├── examples/                   ← Demo scripts & sample configs
 ├── docs/                       ← Design docs, API reference
 │   ├── architecture.md
-│   ├── module_specs.md
-│   └── api_reference.md
-├── scripts/                    ← Utility scripts (format, lint, coverage)
-├── .github/                    ← Issue/PR templates, community files
-│   └── FUNDING.yml
-├── Dockerfile                  ← Dev & test container
-├── Makefile / build.sh         ← Top-level build orchestration
-└── README.md
+│   ├── BUILD.md
+│   ├── development.md
+│   └── DOCKER.md
+├── scripts/                    ← Utility scripts (build, format, lint)
+│   ├── build-cross-platform.sh ← Unix build script
+│   ├── build-cross-platform.bat ← Windows build script
+│   ├── check-env.sh           ← Environment validation
+│   └── ci-helpers.sh          ← CI/CD utilities
+├── dev-roadmap.md             ← Development roadmap (this file)
+├── GUI_plan.md                ← GUI development plan
+├── Dockerfile                 ← Dev & test container
+├── LICENSE-MIT                ← MIT license
+├── LICENSE-APACHE             ← Apache 2.0 license
+└── README.md                  ← Project overview
+```
 
 
 ---
@@ -78,18 +107,11 @@ aegisfs/                     ← Project root
   - [x] Basic documentation and usage examples  
   - [x] Unit and integration tests for core functionality  
 
-**Key Achievements**
-- Successfully implemented and tested core filesystem operations
-- Established solid foundation for future development
-- All tests passing with good code coverage
-- Documentation in place for architecture and usage
-
 ---
 
 ## Phase 1: FUSE-Based User-Space Prototype (In Progress) 🚧
 **Estimated Time: 6–8 Weeks**
 **Current Status: Data Persistence Complete - Integration Testing (Week 6-7)**
-
 
 ### 1. **Data Persistence & FUSE Implementation** ✅
   - [x] **Critical Bug Discovery**: Found FUSE was only writing to memory
@@ -130,9 +152,9 @@ aegisfs/                     ← Project root
 ### 3. Volume & Partition Management ✅ 
   - [x] **Block Device Abstraction**: File-backed and real device support
   - [x] **Filesystem Formatting**: Superblock, inode table, directory structures  
-  - [x] **Real Device Support**: ✅ **BREAKTHROUGH** - Successfully formatted real NVMe partition `/dev/nvme0n1p6`
+  - [x] **Real Device Support**: Successfully formatted real NVMe partition `/dev/nvme0n1p6`
   - [x] **Block Device Size Detection**: Fixed ioctl-based size detection for real block devices
-  - [x] **Format Tool Issues**: ✅ Resolved all Arc ownership, size display, and validation issues
+  - [x] **Format Tool Issues**: Resolved all Arc ownership, size display, and validation issues
   - [x] **Device Mounting**: Reading formatted devices and initializing structures
   - [ ] Volume resize operations (grow/shrink)  
   - [ ] Multi-volume support
@@ -140,12 +162,12 @@ aegisfs/                     ← Project root
 
 ### 4. CLI Management Tool ✅ 
   - [x] **Command structure and argument parsing**
-  - [x] **Unified CLI Architecture**: ✅ **MAJOR ACHIEVEMENT** - Consolidated from 4 separate binaries to single `aegisfs` command
+  - [x] **Unified CLI Architecture**: Consolidated from 4 separate binaries to single `aegisfs` command
   - [x] **Professional User Experience**: Modern subcommand interface with shared global options
   - [x] **Core commands implemented**:
     - [x] `format` - Format a block device with AegisFS
     - [x] `mount` - Mount a formatted filesystem via FUSE
-    - [x] `snapshot` - **COMPLETE** - Full CLI with create/list/delete/rollback/stats, JSON persistence working
+    - [x] `snapshot` - Full CLI with create/list/delete/rollback/stats, JSON persistence working
     - [x] `scrub` - Verify and repair filesystem integrity (framework implemented)
   - [🚧] **Additional commands**:
     - [ ] `resize` - Resize filesystem
@@ -166,101 +188,40 @@ aegisfs/                     ← Project root
     - [ ] Corruption detection and repair
     - [ ] Memory leak and performance regression tests
 
+### Current Status & Key Achievements
+
+**✅ Major Milestones Completed:**
+- **Data Persistence**: Full disk I/O implementation with write-back cache, async thread pool, and 3x retry logic
+- **FUSE Layer**: All core operations functional (mount, stat, create, read, write, mkdir, readdir)
+- **CLI Unification**: Consolidated 4 separate binaries (11.4MB) into single unified CLI (3.2MB - 72% reduction)
+- **Snapshot Framework**: Complete metadata management system with JSON persistence and CLI interface
+- **Project Structure**: Repository layout matches roadmap specification with dual licensing (MIT OR Apache-2.0)
+- **Real Device Support**: Successfully formatted and mounted real NVMe partition with proper size detection
+
+**✅ Critical Bug Fixes:**
+- **Layout Mismatch**: Fixed inconsistent inode_count calculations between format and mount operations
+- **Persistence Issues**: Implemented deferred flush mechanism to avoid deadlocks and ensure directory entries persist to disk
+- **Root Inode**: Corrected root inode number from 2 to 1, resolved runtime nesting panics
+
+**✅ Technical Achievements:**
+- **Cache Strategy**: Hybrid approach with small files (≤4KB) cached in memory, larger files written through to disk
+- **Background Flush**: Automatic periodic sync with configurable intervals (5s default)
+- **Directory Persistence**: Parent-child relationships properly maintained on disk
+- **Cross-Platform Build**: Updated scripts for unified architecture on Windows and Unix systems
+
+**🚧 In Progress:**
+- Integration testing and performance optimization
+- Module integration (journaling, checksums, snapshots) with filesystem operations
+- Performance benchmarking and robustness testing
+
+**📍 Phase 2 Started:**
+- Tauri framework initialized for GUI development in parallel with Phase 1 completion
+
 **Deliverables:**  
-  ‣ [✅] **Fully persistent FUSE filesystem** (I/O Complete working on file support above 60kb)
-  ‣ [✅] **Professional Unified CLI** (complete with all subcommands, proper build system, cross-platform)
-  ‣ [✅] **Production-Ready Project Structure** (perfect layout, dual licensing, documentation)
+  ‣ [✅] **Fully persistent FUSE filesystem**
+  ‣ [✅] **Professional Unified CLI** 
+  ‣ [✅] **Production-Ready Project Structure**
   ‣ [ ] **Benchmark reports & CI integration**
-
-**Current Status Summary:**
-- ✅ **Major Architecture Fix**: Solved critical persistence issue, FUSE filesystem fully operational
-- ✅ **Foundation Solid**: Format/mount tools working, core data structures in place
-- ✅ **Snapshot Framework**: Complete CLI metadata management system with persistence
-- ✅ **Professional CLI**: Unified command interface replacing 4 separate binaries (72% size reduction)
-- ✅ **Project Structure**: Perfect layout matching roadmap, dual licensing, cross-platform builds
-- ✅ **Data Persistence**: Full disk I/O implementation with write-back cache and error handling
-- 🚧 **In Progress**: Integration testing and performance optimization
-- 🚧 **Next Priority**: Complete module integration (journaling, checksums, snapshots)
-- ❌ **Missing**: Performance benchmarking, full module integration
-
-**🎉 DATA PERSISTENCE COMPLETE (January 5, 2025):**
-**MAJOR MILESTONE**: Real data persistence to disk achieved!
-- ✅ **Write-Back Cache**: Hybrid approach with 5-second flush interval
-- ✅ **Inode Bitmap**: Proper inode allocation replacing simple counter
-- ✅ **Async Disk I/O**: Thread pool for non-blocking operations
-- ✅ **Error Handling**: 3x retry logic with graceful degradation
-- ✅ **Cache Strategy**: Small files (≤4KB) cached in memory for speed
-- ✅ **Background Flush**: Automatic periodic sync to disk
-- ✅ **fsync Support**: Manual sync for critical operations
-- ✅ **Directory Persistence**: Parent-child relationships maintained on disk
-
-**🎉 BREAKTHROUGH ACHIEVED (Dec 29, 2024):**
-**FUSE Implementation SUCCESS**: All core operations working perfectly!
-- ✅ Mount process: successful, filesystem shows as mounted
-- ✅ Root directory operations: `stat`, `ls -la` work perfectly  
-- ✅ File/directory creation: works, files show correct size/permissions
-- ✅ Read operations: working (returns correct byte count)
-- ✅ All FUSE callbacks: `getattr`, `lookup`, `create`, `mkdir`, `readdir` functional
-- ✅ Fixed: Root inode mismatch (changed from 2 to 1), runtime nesting panic resolved
-
-**🎉 SNAPSHOT FRAMEWORK COMPLETE (Dec 30, 2024):**
-**Snapshot Management CLI SUCCESS**: Full metadata management system operational!
-- ✅ Complete CLI interface: create, list, delete, rollback, stats commands
-- ✅ JSON persistence: Snapshots survive across CLI sessions  
-- ✅ Error handling: Proper validation and user-friendly messages
-- ✅ Metadata tracking: ID assignment, timestamps, state management
-- ✅ Foundation ready: Architecture solid for filesystem integration
-- 🚧 **Next Phase**: Integrate with FUSE layer to capture actual file/directory state
-
-**🎉 PROJECT ARCHITECTURE & CLI UNIFICATION COMPLETE (Dec 30, 2024):**
-**MAJOR MILESTONE**: Professional project structure and unified CLI achieved!
-- ✅ **Perfect Directory Layout**: Repository structure now exactly matches roadmap specification
-- ✅ **CLI Unification**: Consolidated 4 separate binaries (11.4MB) into single unified CLI (3.2MB - 72% smaller!)
-- ✅ **Dual License Implementation**: MIT OR Apache-2.0 properly documented with license files
-- ✅ **Cross-Platform Build System**: Updated Unix/Windows scripts for new unified architecture
-- ✅ **Professional UX**: Modern CLI with subcommands (`aegisfs format`, `aegisfs mount`, etc.)
-- ✅ **File Organization**: All components in correct locations (fs-core/, fs-app/cli/, docs/, scripts/)
-
-**CURRENT STATUS - Production-Ready Foundation Achieved:**
-1. ✅ **Core FUSE Layer**: Fully functional and stable
-2. ✅ **File Operations**: Create, stat, read, write with correct metadata and persistence
-3. ✅ **In-Memory Cache**: Working perfectly for file/directory tracking with write-back
-4. ✅ **Snapshot CLI Framework**: Complete metadata management system with persistence
-5. ✅ **Professional CLI**: Unified command interface with proper architecture
-6. ✅ **Project Structure**: Perfect layout, licensing, and build system
-7. ✅ **Data Persistence**: Full disk I/O with write-back cache, retry logic, and error handling
-8. ✅ **Disk Integration**: Async operations with thread pool, no runtime nesting issues
-9. 🚧 **Module Integration**: Next priority - connect journaling, checksums, snapshots to filesystem
-
-**📢 CRITICAL BUG FIXES (January 7, 2025):**
-- **Layout Mismatch Issue Fixed**: Discovered and fixed critical bug in filesystem layout calculation
-- **Problem**: Format and mount operations used different inode_count calculations
-- **Details**: 
-  - Format used `block_count * 4` (3,146,520 inodes)
-  - Superblock/Mount used `size / (32 * 1024)` (98,310 inodes)
-  - Different inode counts → different inode table locations (block 123 vs block 30)
-- **Symptom**: Root directory appeared as RegularFile instead of Directory type
-- **Solution**: Unified both to use `size / (32 * 1024)` calculation
-- **Status**: ✅ Fixed and verified
-
-**📢 PERSISTENCE & DEADLOCK ISSUES FIXED (January 7, 2025):**
-- **Problem**: Files created but not persisting after remount + deadlock during flush
-- **Root Cause**: Directory entries only stored in memory + lock conflict during flush
-- **Details**: 
-  - File creation updated parent directory's `children` HashMap in memory only
-  - Directory data blocks were never updated with new entries
-  - On remount, directory read empty data blocks from disk
-  - `flush_writes()` caused deadlock when called from FUSE operation context
-- **Solution**: Implemented deferred flush mechanism
-  - Added `schedule_deferred_flush()` using separate thread with 10ms delay
-  - Avoids deadlock by releasing current operation locks before flush
-  - Enhanced directory persistence system for actual disk writes
-  - Trigger deferred flush after file creation, on fsync, and on unmount
-- **Status**: ✅ Deadlock resolved, persistence mechanism in place, ready for testing
-
-**📢 PHASE 2 STARTED (January 5, 2025):**
-- Started GUI development in parallel while completing Phase 1 data persistence
-- Tauri framework initialized and configured for AegisFS management interface
 
 ---
 
@@ -270,7 +231,7 @@ aegisfs/                     ← Project root
 
 ### 1. Native GUI Framework Selection - **Tauri** ✅ 
   **Chosen Framework: Rust + Tauri**
-  - **Languages**: Rust (backend) + HTML/CSS/JS (frontend)
+  - **Languages**: Rust (backend) + HTML/CSS/TS (frontend)
   - **Platforms**: Linux, Windows, macOS
   - **Single Binary**: ✅ Yes, very small binaries (~10-40MB)
   - **Embedded Assets**: ✅ All web assets embedded
@@ -283,8 +244,6 @@ aegisfs/                     ← Project root
   - [🚧] **UI Development**: Initial HTML/CSS framework being implemented
   - [ ] **Backend Integration**: Connect to fs-core APIs
   - [ ] **Feature Implementation**: Tabs for Snapshots, Tiering, Settings
-  
-  – Prototype basic window, tabs for Snapshots, Tiering, Settings  
 
 ### 2. Integrate Core APIs  
   – REST/gRPC service layer from fs-core  

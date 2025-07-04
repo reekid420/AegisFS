@@ -14,18 +14,17 @@ A modern, feature-rich filesystem with advanced capabilities including journalin
 - **Block device abstraction** - Support for files and real devices (NVMe, SSD, etc.)
 - **Cross-platform builds** - Unix/Linux and Windows build systems
 - **Dual licensing** - MIT OR Apache-2.0 for maximum compatibility
-
+- **Data persistence** - Real file data storage (currently only working for 60kb or below files)
 ### 🚧 In Progress
-- **Data persistence** - Real file data storage (currently using placeholder system)
-- **Snapshot integration** - Connect snapshot system with filesystem operations
 
-### 📋 Planned
+- **Snapshot integration** - Connect snapshot system with filesystem operations
 - **Journaling & Ordered Writes** - Ensure data consistency and crash recovery
 - **Block Checksums & Self-heal** - Detect and repair data corruption automatically
 - **Encryption** - Optional AES-GCM encryption for data at rest
 - **Compression** - LZ4/ZSTD compression with deduplication
-- **Tiered Storage** - Intelligent data placement across storage tiers
 - **Native GUI** - Cross-platform management interface
+### 📋 Planned
+- **Tiered Storage** - Intelligent data placement across storage tiers
 - **Kernel module** - High-performance kernel-space implementation
 
 ## Project Status
@@ -64,9 +63,17 @@ See [dev-roadmap.md](dev-roadmap.md) for detailed progress and development timel
 
 1. **Build AegisFS**:
    ```bash
-   git clone https://github.com/your-username/aegisfs.git
-   cd aegisfs
+   #Linux
+   git clone https://github.com/reekid420/aegisfs.git
+   cd aegisfs/scripts
+   chmod +x ./build-cross-platform.sh
    ./scripts/build-cross-platform.sh
+   
+   #Windows
+   git clone https://github.com/reekid420/aegisfs.git
+   cd aegisfs/scripts
+   ./build-cross-platform.bat   
+   
    ```
 
 2. **Create a test filesystem**:
@@ -96,7 +103,7 @@ See [dev-roadmap.md](dev-roadmap.md) for detailed progress and development timel
 ### Building from Source
 
 ```bash
-git clone https://github.com/your-username/aegisfs.git
+git clone https://github.com/reekid420/aegisfs.git
 cd aegisfs
 
 # Use the cross-platform build script (Required)
