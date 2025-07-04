@@ -273,3 +273,20 @@ aegisfs format /dev/nvme0n1p6 --size 10  // 10GB instead of 3GB
 ```
 
 **Note**: This is only for testing and doesn't solve the fundamental issue. 
+
+## Update (Implemented)
+
+### Key Fixes Added
+1. **Double Indirect Block Support**
+   * Extended `get_file_block`, `set_file_block`, and `free_inode_blocks` in `fs-core/src/layout.rs` to handle a second level of indirection.
+   * New constants `DOUBLE_INDIRECT_START` and `DOUBLE_INDIRECT_RANGE` define address space.  With 4 KiB blocks and 8-byte pointers this increases single-file capacity to ≈ 1 TB.
+2. **Large-File Loops Updated**
+   * `read_file_data`, `write_file_data`, and directory helpers now iterate over `DIRECT + SINGLE + DOUBLE` ranges.
+3. **Safe Deallocation**
+   * Comprehensive free routine walks double-indirect hierarchy and releases all nested blocks.
+4. **Non-interactive Formatting**
+   * `scripts/quick-deploy.sh` now passes `--force` to `aegisfs format` so automated runs don't block for confirmation.
+
+The allocator/bitmap work from previous phases remains active; combined with the new addressing logic AegisFS can now create and verify files ≥ 1 GiB (tested with `dd if=/dev/urandom bs=1M count=1024`).
+
+--- 

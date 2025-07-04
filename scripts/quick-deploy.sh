@@ -71,7 +71,7 @@ fi
 
 # Format the detected device
 echo "Formatting device: $DEVICE"
-if ! sudo ./aegisfs format "$DEVICE" --debug; then
+if ! sudo ./aegisfs format "$DEVICE" --debug --force; then
     echo "ERROR: Failed to format $DEVICE"
     exit 1
 fi
