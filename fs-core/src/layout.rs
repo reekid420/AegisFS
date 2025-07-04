@@ -35,6 +35,12 @@ const DOUBLE_INDIRECT_BLOCK: usize = 13;  // blocks[13] is double indirect block
 const TRIPLE_INDIRECT_BLOCK: usize = 14;  // blocks[14] is triple indirect block (unused for now)
 const POINTERS_PER_BLOCK: usize = BLOCK_SIZE / 8; // 512 pointers per 4KB block
 
+/// --- Extended addressing for large files ---
+/// Starting index of blocks covered by the double indirect pointer
+const DOUBLE_INDIRECT_START: u64 = DIRECT_BLOCKS as u64 + POINTERS_PER_BLOCK as u64;
+/// Number of data blocks addressable via the double indirect scheme
+const DOUBLE_INDIRECT_RANGE: u64 = (POINTERS_PER_BLOCK * POINTERS_PER_BLOCK) as u64;
+
 /// Block numbers for important filesystem structures
 #[derive(Debug, Clone, Copy)]
 pub struct Layout {
@@ -260,11 +266,27 @@ impl DiskFs {
             
             let pointer_index = block_idx - DIRECT_BLOCKS as u64;
             self.read_indirect_block_pointer(indirect_block, pointer_index as usize).await
+        } else if block_idx < DIRECT_BLOCKS as u64 + POINTERS_PER_BLOCK as u64 + (POINTERS_PER_BLOCK * POINTERS_PER_BLOCK) as u64 {
+            // Double indirect block
+            let double_indirect_block = inode.block[DOUBLE_INDIRECT_BLOCK];
+            if double_indirect_block == 0 {
+                return Ok(0); // No double indirect allocated
+            }
+            let remaining = block_idx - (DIRECT_BLOCKS as u64 + POINTERS_PER_BLOCK as u64);
+            let first_level_index = remaining / POINTERS_PER_BLOCK as u64;
+            let second_level_index = remaining % POINTERS_PER_BLOCK as u64;
+
+            // Read first level (single indirect) pointer
+            let first_level_ptr = self.read_indirect_block_pointer(double_indirect_block, first_level_index as usize).await?;
+            if first_level_ptr == 0 {
+                return Ok(0);
+            }
+            self.read_indirect_block_pointer(first_level_ptr, second_level_index as usize).await
         } else {
-            // File too large for current implementation (no double/triple indirect support)
+            // File too large for current implementation (no triple indirect support)
             Err(FsError::InvalidArgument(format!(
                 "File too large. Max supported size: ~{} MB",
-                (DIRECT_BLOCKS * BLOCK_SIZE + POINTERS_PER_BLOCK * BLOCK_SIZE) / (1024 * 1024)
+                (DIRECT_BLOCKS * BLOCK_SIZE + POINTERS_PER_BLOCK * BLOCK_SIZE + (POINTERS_PER_BLOCK * POINTERS_PER_BLOCK) * BLOCK_SIZE) / (1024 * 1024)
             )))
         }
     }
@@ -294,12 +316,40 @@ impl DiskFs {
             
             let pointer_index = block_idx - DIRECT_BLOCKS as u64;
             self.write_indirect_block_pointer(indirect_block, pointer_index as usize, block_num).await
+        } else if block_idx < DIRECT_BLOCKS as u64 + POINTERS_PER_BLOCK as u64 + (POINTERS_PER_BLOCK * POINTERS_PER_BLOCK) as u64 {
+            // Double indirect block
+            let mut double_indirect_block = inode.block[DOUBLE_INDIRECT_BLOCK];
+            // Allocate double indirect if absent
+            if double_indirect_block == 0 {
+                double_indirect_block = self.allocate_data_block().await?;
+                inode.block[DOUBLE_INDIRECT_BLOCK] = double_indirect_block;
+                let zero_block = vec![0u8; BLOCK_SIZE];
+                self.device.write_block(self.layout.data_block(double_indirect_block), &zero_block).await.into_fs_error()?;
+            }
+
+            let remaining = block_idx - (DIRECT_BLOCKS as u64 + POINTERS_PER_BLOCK as u64);
+            let first_level_index = remaining / POINTERS_PER_BLOCK as u64;
+            let second_level_index = remaining % POINTERS_PER_BLOCK as u64;
+
+            // Handle first level single indirect
+            let mut first_level_ptr = self.read_indirect_block_pointer(double_indirect_block, first_level_index as usize).await?;
+            if first_level_ptr == 0 {
+                first_level_ptr = self.allocate_data_block().await?;
+                // initialize
+                let zero_block = vec![0u8; BLOCK_SIZE];
+                self.device.write_block(self.layout.data_block(first_level_ptr), &zero_block).await.into_fs_error()?;
+                // write pointer
+                self.write_indirect_block_pointer(double_indirect_block, first_level_index as usize, first_level_ptr).await?;
+            }
+
+            // finally write second level pointer
+            self.write_indirect_block_pointer(first_level_ptr, second_level_index as usize, block_num).await
         } else {
             // File too large for current implementation
             Err(FsError::InvalidArgument(format!(
                 "File too large. Max supported size: ~{} MB", 
-                (DIRECT_BLOCKS * BLOCK_SIZE + POINTERS_PER_BLOCK * BLOCK_SIZE) / (1024 * 1024)
-                        )))
+                (DIRECT_BLOCKS * BLOCK_SIZE + POINTERS_PER_BLOCK * BLOCK_SIZE + (POINTERS_PER_BLOCK * POINTERS_PER_BLOCK) * BLOCK_SIZE) / (1024 * 1024)
+            )))
         }
     }
 
@@ -309,7 +359,7 @@ impl DiskFs {
                   inode.mode, inode.size, inode.blocks);
         
         let mut freed_count = 0;
-        let max_blocks = DIRECT_BLOCKS as u64 + POINTERS_PER_BLOCK as u64; // Support direct + single indirect
+        let max_blocks = DIRECT_BLOCKS as u64 + POINTERS_PER_BLOCK as u64 + (POINTERS_PER_BLOCK * POINTERS_PER_BLOCK) as u64; // include double indirect
 
         // Free all data blocks used by the file
         for block_idx in 0..max_blocks {
@@ -332,18 +382,31 @@ impl DiskFs {
             }
         }
 
-        // Free indirect block if it exists
-        let indirect_block = inode.block[SINGLE_INDIRECT_BLOCK];
-        if indirect_block > 0 {
-            match self.deallocate_data_block(indirect_block).await {
-                Ok(()) => {
-                    freed_count += 1;
-                    log::debug!("BLOCK_BITMAP: Freed indirect block {}", indirect_block);
-                }
-                Err(e) => {
-                    log::warn!("BLOCK_BITMAP: Failed to free indirect block {}: {:?}", indirect_block, e);
+        // After freeing indirect block, also free double indirect and its children
+        // handle freeing double indirect
+        let double_indirect_block = inode.block[DOUBLE_INDIRECT_BLOCK];
+        if double_indirect_block > 0 {
+            // Free all first level blocks
+            for idx in 0..POINTERS_PER_BLOCK {
+                if let Ok(first_level_ptr) = self.read_indirect_block_pointer(double_indirect_block, idx).await {
+                    if first_level_ptr > 0 {
+                        // Read second level pointers and free data blocks
+                        let mut buf = vec![0u8; BLOCK_SIZE];
+                        if self.device.read_block(self.layout.data_block(first_level_ptr), &mut buf).await.is_ok() {
+                            let mut cur = Cursor::new(&buf);
+                            for _ in 0..POINTERS_PER_BLOCK {
+                                if let Ok(ptr) = cur.read_u64::<LittleEndian>() {
+                                    if ptr > 0 {
+                                        let _ = self.deallocate_data_block(ptr).await;
+                                    }
+                                }
+                            }
+                        }
+                        let _ = self.deallocate_data_block(first_level_ptr).await;
+                    }
                 }
             }
+            let _ = self.deallocate_data_block(double_indirect_block).await;
         }
 
         log::info!("BLOCK_BITMAP: Freed {} blocks for inode", freed_count);
@@ -369,8 +432,6 @@ impl DiskFs {
         }
     }
 }
-
-
 
 #[async_trait]
 impl DiskFsTrait for DiskFs {
@@ -969,7 +1030,7 @@ impl DiskFsTrait for DiskFs {
         }
 
         let mut entries = Vec::new();
-        let max_blocks = DIRECT_BLOCKS as u64 + POINTERS_PER_BLOCK as u64; // Support direct + single indirect
+        let max_blocks = DIRECT_BLOCKS as u64 + POINTERS_PER_BLOCK as u64 + (POINTERS_PER_BLOCK * POINTERS_PER_BLOCK) as u64; // include double indirect
 
         // Read data from the directory's data blocks
         for block_idx in 0..max_blocks {
