@@ -11,6 +11,8 @@ use parking_lot::RwLock;
 use std::io::{self, Cursor, Write, Read};
 use std::sync::Arc;
 use thiserror::Error;
+use std::time::{SystemTime, UNIX_EPOCH};
+use log;
 
 // Helper trait to convert between error types
 trait IntoFsError<T> {
@@ -126,7 +128,7 @@ pub trait DiskFsTrait: Send + Sync {
 
     /// Format a new filesystem on the given block device
     async fn format(
-        device: &mut dyn BlockDevice,
+        device: Arc<dyn BlockDevice>,
         size: u64,
         volume_name: Option<&str>,
     ) -> Result<(), FsError>;
@@ -440,234 +442,134 @@ impl DiskFsTrait for DiskFs {
     where
         Self: Sized,
     {
-        // Read superblock from block 0
-        let mut superblock_buf = vec![0; BLOCK_SIZE];
-        device
-            .read_block(0, &mut superblock_buf)
-            .await
-            .into_fs_error()?;
+        let superblock = Superblock::read_from_disk(&*device).await?;
+        let layout = Layout::new(superblock.block_count, superblock.inode_count);
 
-        // Parse superblock
-        let mut cursor = Cursor::new(superblock_buf);
-        let superblock = Superblock::read_from(&mut cursor).map_err(FsError::Format)?;
+        let block_bitmap = BlockBitmap::load_from_disk(device.clone(), &layout).await?;
 
-        // Create cache (cache 1024 blocks = 4MB)
-        let cache = BlockCache::new(device.clone(), 1024, false);
+        let cache = BlockCache::new(device.clone(), 1024); // 1024 block cache size
 
-        // Calculate layout
-        let block_count = superblock.block_count;
-        let inode_count = superblock.inode_count;
-        let layout = Layout::new(block_count, inode_count);
-        log::info!("LAYOUT MOUNT: block_count={}, inode_count={}, inode_table_start={}", 
-                   block_count, inode_count, layout.inode_table);
-
-        // Load block bitmap from disk
-        let block_bitmap = Arc::new(RwLock::new(
-            BlockBitmap::load_from_disk(device.clone(), &layout).await
-                .map_err(|e| FsError::Io(BlockDeviceError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other, 
-                    format!("Failed to load block bitmap: {:?}", e)
-                ))))?
-        ));
-
-        Ok(Self {
+        Ok(DiskFs::new(
             device,
             cache,
             layout,
             superblock,
-            block_bitmap,
-        })
+            Arc::new(RwLock::new(block_bitmap)),
+        ))
     }
 
     /// Format a new filesystem on the given block device
     async fn format(
-        device: &mut dyn BlockDevice,
+        device: Arc<dyn BlockDevice>,
         size: u64,
         volume_name: Option<&str>,
     ) -> Result<(), FsError> {
-        // Create superblock
-        let block_size = 4096; // 4KB blocks
-        let block_count = size / block_size as u64;
-        let inode_count = size / (32 * 1024); // 1 inode per 32KB (same calculation as Superblock::new)
+        let block_size = device.block_size() as u64;
+        let block_count = size / block_size;
+        let inode_count = block_count / 4;
 
-        // Create a new superblock - convert io::Result to our Result
-        let mut superblock =
-            Superblock::new(size, volume_name).map_err(|e| FsError::Format(FormatError::Io(e)))?;
-
-        // Create layout
         let layout = Layout::new(block_count, inode_count);
-        log::info!("LAYOUT FORMAT: block_count={}, inode_count={}, inode_table_start={}", 
-                   block_count, inode_count, layout.inode_table);
 
-        // Write superblock to block 0
-        let mut superblock_buf = vec![0u8; block_size as usize];
-        superblock
-            .write_to(&mut std::io::Cursor::new(&mut superblock_buf))
-            .map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
-
-        device
-            .write_block(0, &superblock_buf)
-            .await
-            .map_err(FsError::from)?;
-
-        // Create root directory inode
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| FsError::InvalidArgument("System time is before UNIX_EPOCH".to_string()))?
-            .as_secs();
-
-        // Create root directory entries first to calculate size
-        let dot = DirEntry::new(1, ".");
-        let dot_dot = DirEntry::new(1, "..");
-        
-        // Calculate directory size
-        let dir_entry_size = dot.rec_len as u64 + dot_dot.rec_len as u64;
-
-        let mut root_inode = DiskInode {
-            mode: 0o40755, // Directory with 0755 permissions
-            uid: 0,        // root
-            gid: 0,        // root
-            size: dir_entry_size, // Set proper directory size
-            atime: now,
-            mtime: now,
-            ctime: now,
-            links: 2, // '.' and '..' from parent
-            blocks: 1, // One data block
-            flags: 0,
-            osd1: [0; 4],
-            block: [0; 15], // Will set block[0] = 0 for first data block
-            generation: 0,
-            file_acl: 0,
-            dir_acl: 0,
-            faddr: 0,
-            osd2: [0; 12],
-        };
-        
-        // Point to the first data block (data block 0)
-        root_inode.block[0] = 0;
-
-        // Write root inode to the correct offset in the inode table
-        let (inode_block_num, inode_offset) = layout.inode_block(1);
-        log::info!("LAYOUT: Writing root inode 1 to block {} at offset {} (mode=0o{:o})", 
-                   inode_block_num, inode_offset, root_inode.mode);
-        
-        // Read the existing inode table block (or create new one if it doesn't exist)
-        let mut inode_table_block = vec![0u8; block_size as usize];
-        // Note: For a fresh filesystem, this block will be all zeros, which is fine
-        
-        // Create a 128-byte buffer for just the inode
-        let mut inode_data = vec![0u8; 128];
-        root_inode
-            .write_to(&mut std::io::Cursor::new(&mut inode_data))
-            .map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
-        
-        // Place the inode at the correct offset within the block
-        let offset = inode_offset as usize;
-        inode_table_block[offset..offset + 128].copy_from_slice(&inode_data);
-        
-        // Write the inode table block
-        device
-            .write_block(inode_block_num, &inode_table_block)
-            .await
-            .map_err(FsError::from)?;
-        
-        log::info!("LAYOUT: Root inode written to disk successfully");
-
-        // Create root directory entries (already created above)
-        let mut dir_block = vec![0u8; block_size as usize];
-        let mut cursor = std::io::Cursor::new(&mut dir_block);
-
-        dot.write_to(&mut cursor)
-            .map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
-        dot_dot
-            .write_to(&mut cursor)
-            .map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
-
-        // Write directory block
-        device
-            .write_block(layout.data_block(0), &dir_block)
-            .await
-            .map_err(FsError::from)?;
-
-        // Update superblock with allocated blocks
-        superblock.free_blocks = block_count - 3; // Superblock, inode, and data block
-        superblock.free_inodes = inode_count - 1; // Root inode
-        superblock.last_write = now;
-
-        // Write updated superblock
-        let mut superblock_buf = vec![0u8; block_size as usize];
-        superblock
-            .write_to(&mut std::io::Cursor::new(&mut superblock_buf))
-            .map_err(|e| FsError::Io(BlockDeviceError::Io(e)))?;
-
-        device
-            .write_block(0, &superblock_buf)
-            .await
-            .map_err(FsError::from)?;
-
-        // Initialize and save block bitmap
-        let mut block_bitmap = BlockBitmap::new(
+        let mut superblock = Superblock {
+            magic: 0xAE615F5,
+            version: 1,
+            block_size: block_size as u32,
             block_count,
-            layout.data_blocks,
-            layout.data_blocks_count,
-        );
-        
-        // Initialize all blocks as free
+            inode_count,
+            free_blocks: 0,
+            free_inodes: 0,
+            volume_name: [0; 32],
+            last_mount: 0,
+            last_write: 0,
+        };
+        if let Some(name) = volume_name {
+            let bytes = name.as_bytes();
+            let len = std::cmp::min(bytes.len(), 32);
+            superblock.volume_name[..len].copy_from_slice(&bytes[..len]);
+        }
+        let mut superblock_data = vec![0u8; block_size as usize];
+        superblock.write_to(&mut superblock_data);
+        device.write_block(0, &superblock_data).await?;
+
+        let mut block_bitmap = BlockBitmap::new(block_count, layout.data_blocks, layout.data_blocks_count);
         block_bitmap.initialize_as_free();
         
         // Mark the root directory's data block as allocated
-        if let Err(e) = block_bitmap.free(0) {
+        if let Err(e) = block_bitmap.set_allocated(0) {
             log::warn!("Failed to mark root data block as allocated: {:?}", e);
-        } else {
-            // Actually allocate it properly
-            if let Some(allocated_block) = block_bitmap.allocate() {
-                log::info!("FORMAT: Allocated root directory data block: {}", allocated_block);
-            } else {
-                log::error!("FORMAT: Failed to allocate root directory data block");
-            }
         }
         
-        // Save block bitmap to disk
-        let device_arc = Arc::new(
-            crate::blockdev::FileBackedBlockDevice::open(
-                std::path::Path::new("/dev/null"), // Dummy path - we'll use the actual device
-                false
-            ).await.map_err(|e| FsError::Io(BlockDeviceError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to create device wrapper: {:?}", e)
-            ))))?
-        );
-        
-        // Create a temporary wrapper to save the bitmap
-        let mut temp_bitmap_blocks = Vec::new();
-        let bitmap_size = ((layout.data_blocks_count + 7) / 8) as usize;
-        let mut bytes_written = 0;
-        
-        // Prepare bitmap blocks for writing
-        for block_offset in 0..layout.block_bitmap_blocks {
-            let mut block_data = vec![0u8; block_size as usize];
-            
-            let bytes_to_copy = std::cmp::min(block_size as usize, bitmap_size - bytes_written);
-            if bytes_to_copy > 0 && bytes_written < block_bitmap.bitmap_data().len() {
-                block_data[..bytes_to_copy]
-                    .copy_from_slice(&block_bitmap.bitmap_data()[bytes_written..bytes_written + bytes_to_copy]);
-                bytes_written += bytes_to_copy;
-            }
-            
-            temp_bitmap_blocks.push((layout.block_bitmap + block_offset, block_data));
-        }
-        
-        // Write bitmap blocks to device
-        for (block_num, block_data) in temp_bitmap_blocks {
-            device.write_block(block_num, &block_data).await?;
-            log::debug!("FORMAT: Wrote block bitmap block {}", block_num);
-        }
-        
-        log::info!("FORMAT: Block bitmap initialized and saved - {} total blocks, {} free blocks", 
-                  block_bitmap.total_blocks(), block_bitmap.free_blocks());
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
 
-        // Sync the device to ensure all writes are persisted
-        device.sync().await?;
+        let mut root_inode = DiskInode {
+            mode: 0o40755,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            blocks: 1,
+            atime: now,
+            mtime: now,
+            ctime: now,
+            block: [0; 15],
+            flags: 0,
+        };
+
+        let (inode_block, inode_offset) = layout.inode_block(ROOT_INODE_NUM);
+        log::info!(
+            "LAYOUT: Writing root inode {} to block {} at offset {} (mode=0o{:o})",
+            ROOT_INODE_NUM,
+            inode_block,
+            inode_offset,
+            root_inode.mode
+        );
+
+        match block_bitmap.allocate() {
+            Some(root_data_block) => {
+                root_inode.block[0] = root_data_block;
+                log::info!(
+                    "LAYOUT: Allocated block {} for root directory data",
+                    root_data_block
+                );
+            }
+            None => {
+                log::error!("LAYOUT: Failed to allocate initial block for root directory");
+                return Err(FsError::NoFreeBlocks);
+            }
+        }
+
+        let mut inode_buf = vec![0u8; INODE_SIZE as usize];
+        root_inode.write_to(&mut inode_buf);
+
+        let mut table_block = vec![0u8; block_size as usize];
+        table_block[inode_offset as usize..inode_offset as usize + INODE_SIZE as usize]
+            .copy_from_slice(&inode_buf);
+        device.write_block(inode_block, &table_block).await?;
+
+        log::info!("LAYOUT: Root inode written to disk successfully");
+
+        if let Err(e) = block_bitmap.set_allocated(root_inode.block[0]) {
+            log::warn!("Failed to mark root data block as allocated: {:?}", e);
+        }
+
+        for i in 0..layout.block_bitmap_blocks {
+            let start = (i * block_size) as usize;
+            let end = std::cmp::min(start + block_size as usize, block_bitmap.bitmap_data().len());
+            if start < end {
+                device
+                    .write_block(layout.block_bitmap + i, &block_bitmap.bitmap_data()[start..end])
+                    .await?;
+                log::debug!("FORMAT: Wrote block bitmap block {}", layout.block_bitmap + i);
+            }
+        }
+        
+        log::info!(
+            "LAYOUT: Block bitmap initialized and saved - {} total blocks, {} free blocks",
+            block_bitmap.total_blocks(),
+            block_bitmap.free_blocks()
+        );
 
         Ok(())
     }

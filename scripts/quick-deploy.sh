@@ -1,9 +1,13 @@
 #!/bin/bash
 
-./build-cross-platform.sh
-echo "Build complete"
+# Build step removed. This script is now only for deployment.
+echo "AegisFS deployment script started."
+
 mkdir -p /tmp/aegisfs
-cd ../fs-app/cli/target/release/
+
+# The script needs to run from the release directory.
+# This assumes the script is always called from the project root.
+cd fs-app/cli/target/release/
 
 # Try to find the correct device by PARTUUID or fallback to device names
 DEVICE=""
@@ -43,6 +47,38 @@ elif [[ "$1" == "-p" ]]; then
         echo "  - /dev/nvme0n1p6"
         exit 1
     fi
+# Check if script is run with -m flag to skip format
+elif [[ "$1" == "-m" ]]; then
+    echo "Mounting device without formatting."
+
+    # --- Find device for mounting ---
+    PARTITION_UUID="$DEFAULT_PARTITION_UUID"
+    echo "Searching for device with PARTUUID: $PARTITION_UUID"
+    if [ -e "/dev/disk/by-partuuid/$PARTITION_UUID" ]; then
+        DEVICE="/dev/disk/by-partuuid/$PARTITION_UUID"
+        echo "Found device by PARTUUID: $DEVICE -> $(readlink -f $DEVICE)"
+    elif [ -e "/dev/nvme1n1p6" ]; then
+        DEVICE="/dev/nvme1n1p6"
+        echo "Using fallback device: $DEVICE"
+    elif [ -e "/dev/nvme0n1p6" ]; then
+        DEVICE="/dev/nvme0n1p6"
+        echo "Using fallback device: $DEVICE"
+    else
+        echo "ERROR: No suitable AegisFS partition found for mounting!"
+        echo "Searched for:"
+        echo "  - PARTUUID: $PARTITION_UUID"
+        echo "  - /dev/nvme1n1p6"
+        echo "  - /dev/nvme0n1p6"
+        exit 1
+    fi
+    # --------------------------------
+
+    # Skip format and directly mount
+    echo "Mounting device: $DEVICE"
+    sudo ./aegisfs mount "$DEVICE" /tmp/aegisfs --debug > ../../../../mount-log.log 2>&1 &
+    echo "Mount complete - logs redirected to ../../../../mount-log.log"
+    echo "Device used: $DEVICE"
+    exit 0
 else
     # Interactive mode when not using -p flag
     
@@ -69,14 +105,15 @@ else
     fi
 fi
 
-# Format the detected device
-echo "Formatting device: $DEVICE"
-if ! sudo ./aegisfs format "$DEVICE" --debug --force; then
-    echo "ERROR: Failed to format $DEVICE"
-    exit 1
+# Format the detected device if not skipped
+if [ -z "$1" ] || [[ "$1" != "-m" ]]; then
+    echo "Formatting device: $DEVICE"
+    if ! sudo ./aegisfs format "$DEVICE" --debug --force; then
+        echo "ERROR: Failed to format $DEVICE"
+        exit 1
+    fi
+    echo "Format complete for $DEVICE"
 fi
-
-echo "Format complete for $DEVICE"
 
 # Clean up old logs
 rm -f ../../../../mount-log.log.old

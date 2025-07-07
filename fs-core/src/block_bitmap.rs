@@ -248,6 +248,29 @@ impl BlockBitmap {
         (self.bitmap[byte_idx] & (1 << bit)) != 0
     }
 
+    /// Mark a block as allocated (for formatting and recovery)
+    pub fn set_allocated(&mut self, block_idx: u64) -> Result<(), BlockBitmapError> {
+        if block_idx >= self.data_blocks_count {
+            return Err(BlockBitmapError::InvalidBlockNumber(block_idx));
+        }
+
+        let byte_idx = (block_idx / 8) as usize;
+        let bit = (block_idx % 8) as u8;
+
+        if byte_idx >= self.bitmap.len() {
+            return Err(BlockBitmapError::InvalidBlockNumber(block_idx));
+        }
+
+        // Check if block is already allocated
+        if (self.bitmap[byte_idx] & (1 << bit)) != 0 {
+            return Err(BlockBitmapError::BlockAlreadyAllocated(block_idx));
+        }
+
+        self.bitmap[byte_idx] |= 1 << bit;
+        self.free_blocks.fetch_sub(1, Ordering::Relaxed);
+        Ok(())
+    }
+
     /// Get the number of free blocks
     pub fn free_blocks(&self) -> u64 {
         self.free_blocks.load(Ordering::Relaxed)

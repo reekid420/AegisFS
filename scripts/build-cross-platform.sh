@@ -134,7 +134,7 @@ build_current_platform() {
     print_status "Detected OS: $os"
     
     # Build the core library first
-    cd ../fs-core
+    cd fs-core
     print_status "Building AegisFS core library..."
     cargo build --release --features "fuse,encryption,compression"
     cd ..
@@ -246,7 +246,7 @@ main() {
             build_current_platform
             print_success "Build completed successfully!"
             print_status "AegisFS CLI binary is available in: fs-app/cli/target/release/aegisfs"
-            print_status "Core library is available in: fs-core/target/release/"
+            print_status "AegisFS Core library is available in: fs-core/target/release/"
             ;;
         "cross")
             if [[ -z "$2" ]]; then
@@ -258,11 +258,11 @@ main() {
             cross_compile "$2"
             print_success "Cross-compilation completed successfully!"
             print_status "AegisFS CLI binary is available in: fs-app/cli/target/$2/release/aegisfs"
-            print_status "Core library is available in: fs-core/target/$2/release/"
+            print_status "AegisFS Core library is available in: fs-core/target/$2/release/"
             ;;
         "test")
             check_dependencies
-            cd ../fs-core
+            cd fs-core
             print_status "Running core library tests..."
             cargo test --features "encryption,compression"
             cd ../fs-app/cli
@@ -272,7 +272,7 @@ main() {
             print_success "Tests completed successfully!"
             ;;
         "clean")
-            cd ../fs-core
+            cd fs-core
             print_status "Cleaning core library build artifacts..."
             cargo clean
             cd ../fs-app/cli
